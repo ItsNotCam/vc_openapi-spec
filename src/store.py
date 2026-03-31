@@ -48,7 +48,7 @@ class _OllamaEmbeddingFunction(EmbeddingFunction):
             batch = texts[i:i + batch_size]
             response = httpx.post(
                 self._url,
-                json={"model": self._model, "input": batch},
+                json={"model": self._model, "input": batch, "truncate": True},
                 timeout=120,
             )
             response.raise_for_status()
