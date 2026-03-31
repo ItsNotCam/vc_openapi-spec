@@ -40,14 +40,18 @@ class _OllamaEmbeddingFunction(EmbeddingFunction):
         self._url = url.rstrip("/") + "/api/embed"
         self._model = model
 
-    def __call__(self, input: list[str]) -> Embeddings:
-        response = httpx.post(
-            self._url,
-            json={"model": self._model, "input": input},
-            timeout=60,
-        )
-        response.raise_for_status()
-        return response.json()["embeddings"]
+    def __call__(self, input: list[str], batch_size: int = 32) -> Embeddings:
+        embeddings = []
+        for i in range(0, len(input), batch_size):
+            batch = input[i:i + batch_size]
+            response = httpx.post(
+                self._url,
+                json={"model": self._model, "input": batch},
+                timeout=120,
+            )
+            response.raise_for_status()
+            embeddings.extend(response.json()["embeddings"])
+        return embeddings
 
 
 def _build_embedding_function():

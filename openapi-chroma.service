@@ -4,16 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=openapi-chroma
-WorkingDirectory=/opt/openapi-chroma
-ExecStart=/opt/openapi-chroma/.venv/bin/python main.py serve --transport http --port 3000
+User=mcp
+WorkingDirectory=/home/mcp
+ExecStart=/home/mcp/.venv/bin/python main.py serve --transport http --port 3000
 Restart=on-failure
 RestartSec=5
 
 # Keep ChromaDB data across restarts
 Environment=CHROMA_DB_PATH=/var/lib/openapi-chroma
 Environment=OLLAMA_URL=https://ai.home.itsnotcam.dev
-Environment=OLLAMA_MODEL=mxbai-embed-large
+Environment=OLLAMA_MODEL=nomic-embed-text
 
 [Install]
 WantedBy=multi-user.target
