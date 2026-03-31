@@ -40,10 +40,12 @@ class _OllamaEmbeddingFunction(EmbeddingFunction):
         self._url = url.rstrip("/") + "/api/embed"
         self._model = model
 
-    def __call__(self, input: list[str], batch_size: int = 32) -> Embeddings:
+    def __call__(self, input: list[str], batch_size: int = 16) -> Embeddings:
+        # nomic-embed-text supports 8192 tokens (~32k chars), truncate to be safe
+        texts = [t[:8000] for t in input]
         embeddings = []
-        for i in range(0, len(input), batch_size):
-            batch = input[i:i + batch_size]
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
             response = httpx.post(
                 self._url,
                 json={"model": self._model, "input": batch},
