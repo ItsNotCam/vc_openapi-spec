@@ -38,8 +38,10 @@ def _build_embedding_function():
     ollama_url = os.getenv("OLLAMA_URL")
     if ollama_url:
         model = os.getenv("OLLAMA_MODEL", "mxbai-embed-large")
+        print(f"[embeddings] using Ollama  url={ollama_url}  model={model}")
         return embedding_functions.OllamaEmbeddingFunction(url=ollama_url, model_name=model)
     model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    print(f"[embeddings] using sentence-transformers  model={model}")
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model)
 
 
