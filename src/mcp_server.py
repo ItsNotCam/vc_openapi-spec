@@ -141,7 +141,12 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    r = _get_retriever()
+    import traceback
+    try:
+        r = _get_retriever()
+    except Exception:
+        traceback.print_exc()
+        raise
 
     if name == "search_endpoints":
         results = r.search_endpoints(
