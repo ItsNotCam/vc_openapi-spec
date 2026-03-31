@@ -3,3 +3,4 @@
 .venv
 .zip
 __pycache__/
+.chroma_db
