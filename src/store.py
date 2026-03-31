@@ -49,6 +49,8 @@ class _OllamaEmbeddingFunction(EmbeddingFunction):
                 json={"model": self._model, "prompt": text[:8000]},
                 timeout=120,
             )
+            if not response.is_success:
+                print(f"[embeddings] error {response.status_code}: {response.text[:500]}")
             response.raise_for_status()
             embeddings.append(response.json()["embedding"])
         return embeddings
