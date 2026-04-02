@@ -118,6 +118,17 @@ class SpecStore:
         if ids:
             self._collection.delete(ids=ids)
 
+    def get_all(self, api_name: str) -> list[dict]:
+        """Return all documents for a given API as list of {id, text, metadata}."""
+        results = self._collection.get(
+            where={"api": api_name},
+            include=["documents", "metadatas"],
+        )
+        ids = results.get("ids", [])
+        docs = results.get("documents", []) or []
+        metas = results.get("metadatas", []) or []
+        return [{"id": i, "text": t, "metadata": m} for i, t, m in zip(ids, docs, metas)]
+
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------

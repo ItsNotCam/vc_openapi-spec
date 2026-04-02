@@ -4,3 +4,4 @@
 .zip
 __pycache__/
 .chroma_db
+proxmox_observed.json
