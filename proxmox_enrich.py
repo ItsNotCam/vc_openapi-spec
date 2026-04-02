@@ -796,23 +796,8 @@ def build_openapi(observations: dict[str, dict]) -> dict:
                 "schema": {"type": ptype},
             })
 
-        # Build response schema
-        if data_schema:
-            resp_schema: dict = {
-                "type": "object",
-                "properties": {
-                    "errors": {"type": "object"},
-                    "data": data_schema,
-                },
-            }
-        else:
-            resp_schema = {
-                "type": "object",
-                "properties": {
-                    "errors": {"type": "object"},
-                    "data": {},
-                },
-            }
+        # Build response schema — expose data fields directly so chunker renders real field names
+        resp_schema: dict = data_schema if data_schema else {"type": "object"}
 
         operation: dict = {
             "operationId": op_id,
