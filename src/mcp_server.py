@@ -185,11 +185,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
         if result is None:
             return [TextContent(type="text", text="Endpoint not found.")]
-        text = result["text"]
-        full_schema = result["metadata"].get("response_schema")
-        if full_schema:
-            text += f"\nFull Response Schema:\n  {full_schema}"
-        return [TextContent(type="text", text=text)]
+        return [TextContent(type="text", text=result["text"])]
 
     elif name == "list_apis":
         apis = r.list_apis()

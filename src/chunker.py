@@ -77,14 +77,19 @@ def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
             desc = resp.get("description", "")
             content = resp.get("content", {})
             schema_str = ""
+            full_schema_str = ""
             for _, media_obj in content.items():
                 if isinstance(media_obj, dict):
-                    schema_str = _schema_summary(media_obj.get("schema", {}))
+                    schema = media_obj.get("schema", {})
+                    schema_str = _schema_summary(schema)
+                    full_schema_str = _full_schema_str(schema)
                     break
             line = f"  {status}: {desc}"
             if schema_str:
                 line += f" — {schema_str}"
             lines.append(line)
+            if full_schema_str and full_schema_str != schema_str:
+                lines.append(f"    Schema: {full_schema_str}")
 
     text = "\n".join(lines)
     metadata: dict = {
