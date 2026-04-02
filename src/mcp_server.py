@@ -132,6 +132,17 @@ async def list_tools() -> list[Tool]:
                 "required": ["source", "api_name"],
             },
         ),
+        Tool(
+            name="delete_api",
+            description="Remove all documents for a given API from the knowledge base.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "api_name": {"type": "string", "description": "The API name to delete (e.g. 'proxmox')"},
+                },
+                "required": ["api_name"],
+            },
+        ),
     ]
 
 
@@ -193,6 +204,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f"({summary['total']} total documents)."
             ),
         )]
+
+    elif name == "delete_api":
+        api_name = arguments["api_name"]
+        r.delete_api(api_name)
+        return [TextContent(type="text", text=f"Deleted all documents for API '{api_name}'.")]
 
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

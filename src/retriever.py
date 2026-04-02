@@ -33,6 +33,7 @@ class Retriever:
         endpoint_docs = [endpoint_to_document(e, api_name) for e in endpoints]
         schema_docs = [schema_to_document(s, api_name) for s in schemas]
 
+        self._store.delete_api(api_name)
         self._store.upsert(endpoint_docs + schema_docs)
 
         return {
@@ -94,6 +95,9 @@ class Retriever:
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
+
+    def delete_api(self, api_name: str) -> None:
+        self._store.delete_api(api_name)
 
     def list_apis(self) -> list[str]:
         return self._store.list_apis()
