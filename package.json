@@ -17,7 +17,7 @@
 	"dependencies": {
 		"@apidevtools/json-schema-ref-parser": "^11.9.3",
 		"@modelcontextprotocol/sdk": "^1.12.1",
-		"axios": "^1.9.0",
+		"axios": "1.14.0",
 		"chromadb": "^1.9.2",
 		"commander": "^13.1.0",
 		"hono": "^4.7.7",

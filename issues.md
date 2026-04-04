@@ -1,5 +1,15 @@
 # Known Issues
 
+## Critical — Axios Supply Chain Attack (March 2026)
+
+Axios versions **1.14.1** and **0.30.4** were compromised in a supply chain attack (attributed to Sapphire Sleet / North Korean state actor). A malicious dependency (`plain-crypto-js`) deployed a cross-platform RAT via postinstall hook.
+
+**Mitigation applied**: `axios` is pinned to exact version `1.14.0` (no caret/tilde) in `package.json`. Do NOT upgrade to 1.14.1 until the axios team confirms the situation is resolved.
+
+Consider migrating to native `fetch` (built into Bun) as a longer-term alternative.
+
+Sources: Microsoft Security Blog, Google Cloud Blog, The Hacker News, CSA Singapore advisory.
+
 ## Minor
 
 1. **ChromaDB JS client version**: The `chromadb` npm package (v1.10.5) used here is the older JS client. ChromaDB has a newer v3.x client (`chromadb-client`) that may have API differences. The current implementation works but you may want to evaluate upgrading.
