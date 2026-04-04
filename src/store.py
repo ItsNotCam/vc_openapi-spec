@@ -99,16 +99,20 @@ class SpecStore:
     # Ingest
     # ------------------------------------------------------------------
 
+    _BATCH_SIZE = 5000  # ChromaDB max is 5461; stay safely under
+
     def upsert(self, documents: list[tuple[str, str, dict]]) -> int:
         """Upsert a list of (id, text, metadata) documents. Returns count."""
         if not documents:
             return 0
         ids, texts, metadatas = zip(*documents)
-        self._collection.upsert(
-            ids=list(ids),
-            documents=list(texts),
-            metadatas=list(metadatas),
-        )
+        ids, texts, metadatas = list(ids), list(texts), list(metadatas)
+        for i in range(0, len(ids), self._BATCH_SIZE):
+            self._collection.upsert(
+                ids=ids[i:i + self._BATCH_SIZE],
+                documents=texts[i:i + self._BATCH_SIZE],
+                metadatas=metadatas[i:i + self._BATCH_SIZE],
+            )
         return len(ids)
 
     def delete_api(self, api_name: str) -> None:

@@ -102,6 +102,11 @@ class Retriever:
     def list_apis(self) -> list[str]:
         return self._store.list_apis()
 
+    def list_endpoints(self, api_name: str) -> list[dict]:
+        """Return all endpoint documents for a given API."""
+        docs = self._store.get_all(api_name)
+        return [d for d in docs if d.get("metadata", {}).get("type") == "endpoint"]
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers

@@ -16,27 +16,31 @@ Document = tuple[str, str, dict]  # (id, text, metadata)
 
 
 def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
-    """Convert an endpoint dict (from parser.extract_endpoints) to a Document."""
+    """Convert an endpoint dict (from parser.extract_endpoints) to a Document.
+
+    The *document text* (what gets embedded) is a short semantic summary so
+    the embedding model can focus on meaning rather than boilerplate.
+    The full verbose description is stored in metadata["full_text"] for
+    display in search results and get_endpoint lookups.
+    """
     method = endpoint["method"]
     path = endpoint["path"]
     doc_id = f"{api_name}:endpoint:{method}:{path}"
 
-    lines: list[str] = [
-        f"{method} {path}",
-    ]
+    # ── Full text (stored in metadata, used for display) ─────────────
+    full_lines: list[str] = [f"{method} {path}"]
     if endpoint.get("summary"):
-        lines.append(f"Summary: {endpoint['summary']}")
+        full_lines.append(f"Summary: {endpoint['summary']}")
     if endpoint.get("tags"):
-        lines.append(f"Tags: {', '.join(endpoint['tags'])}")
+        full_lines.append(f"Tags: {', '.join(endpoint['tags'])}")
     if endpoint.get("description"):
-        lines.append(f"Description: {endpoint['description']}")
+        full_lines.append(f"Description: {endpoint['description']}")
     if endpoint.get("operation_id"):
-        lines.append(f"Operation ID: {endpoint['operation_id']}")
+        full_lines.append(f"Operation ID: {endpoint['operation_id']}")
 
-    # Parameters
     params = endpoint.get("parameters") or []
     if params:
-        lines.append("Parameters:")
+        full_lines.append("Parameters:")
         for p in params:
             if not isinstance(p, dict):
                 continue
@@ -51,26 +55,24 @@ def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
                 line += f": {ptype}"
             if desc:
                 line += f" — {desc}"
-            lines.append(line)
+            full_lines.append(line)
 
-    # Request body
     req_body = endpoint.get("request_body")
     if req_body and isinstance(req_body, dict):
-        lines.append("Request Body:")
+        full_lines.append("Request Body:")
         desc = req_body.get("description", "")
         if desc:
-            lines.append(f"  {desc}")
+            full_lines.append(f"  {desc}")
         content = req_body.get("content", {})
         for media_type, media_obj in content.items():
             if not isinstance(media_obj, dict):
                 continue
             schema = media_obj.get("schema", {})
-            lines.append(f"  ({media_type}): {_schema_summary(schema)}")
+            full_lines.append(f"  ({media_type}): {_schema_summary(schema)}")
 
-    # Responses
     responses = endpoint.get("responses") or {}
     if responses:
-        lines.append("Responses:")
+        full_lines.append("Responses:")
         for status, resp in responses.items():
             if not isinstance(resp, dict):
                 continue
@@ -87,21 +89,40 @@ def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
             line = f"  {status}: {desc}"
             if schema_str:
                 line += f" — {schema_str}"
-            lines.append(line)
+            full_lines.append(line)
             if full_schema_str and full_schema_str != schema_str:
-                lines.append(f"    Schema: {full_schema_str}")
+                full_lines.append(f"    Schema: {full_schema_str}")
 
-    text = "\n".join(lines)
+    full_text = "\n".join(full_lines)
+
+    # ── Embedding text (short, semantic — what the vector search indexes) ─
+    embed_parts: list[str] = [f"{method} {path}"]
+    if endpoint.get("summary"):
+        embed_parts.append(endpoint["summary"])
+    if endpoint.get("tags"):
+        embed_parts.append(", ".join(endpoint["tags"]))
+    if endpoint.get("description"):
+        # First sentence only — descriptions can be pages long
+        desc = endpoint["description"]
+        first_sentence = desc.split(". ")[0].split(".\n")[0]
+        embed_parts.append(first_sentence)
+    if params:
+        param_names = [p.get("name", "") for p in params if isinstance(p, dict)]
+        if param_names:
+            embed_parts.append("params: " + ", ".join(param_names))
+    embed_text = "\n".join(embed_parts)
+
+    # ── Metadata ─────────────────────────────────────────────────────
     metadata: dict = {
         "type": "endpoint",
         "method": method,
         "path": path,
         "api": api_name,
+        "full_text": full_text,
     }
     if endpoint.get("operation_id"):
         metadata["operation_id"] = endpoint["operation_id"]
     if endpoint.get("tags"):
-        # ChromaDB metadata values must be str/int/float/bool — join tags
         metadata["tags"] = ", ".join(endpoint["tags"])
 
     # Store full (untruncated) response schema for exact get_endpoint lookups
@@ -115,7 +136,7 @@ def endpoint_to_document(endpoint: dict, api_name: str) -> Document:
                 break
             break
 
-    return doc_id, text, metadata
+    return doc_id, embed_text, metadata
 
 
 def schema_to_document(schema: dict, api_name: str) -> Document:
@@ -162,25 +183,25 @@ def schema_to_document(schema: dict, api_name: str) -> Document:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _full_schema_str(schema: Any) -> str:
+def _full_schema_str(schema: Any, depth: int = 0) -> str:
     """Produce a complete schema string with all fields and types (no truncation)."""
-    if not isinstance(schema, dict):
+    if not isinstance(schema, dict) or depth > 8:
         return ""
     stype = schema.get("type", "")
     if stype == "array":
-        return f"array of {_full_schema_str(schema.get('items', {}))}"
+        return f"array of {_full_schema_str(schema.get('items', {}), depth + 1)}"
     if stype == "object" or schema.get("properties"):
         props = schema.get("properties", {})
         if not props:
             return "object"
-        parts = [f"{k}: {_full_schema_str(v)}" for k, v in props.items()]
+        parts = [f"{k}: {_full_schema_str(v, depth + 1)}" for k, v in props.items()]
         return "{ " + ", ".join(parts) + " }"
     if stype:
         return stype
     for combiner in ("allOf", "oneOf", "anyOf"):
         parts = schema.get(combiner)
         if parts:
-            summaries = [_full_schema_str(p) for p in parts if isinstance(p, dict)]
+            summaries = [_full_schema_str(p, depth + 1) for p in parts if isinstance(p, dict)]
             return f"{combiner}({', '.join(s for s in summaries if s)})"
     return ""
 
