@@ -84,18 +84,34 @@ export async function listEndpoints(api: string): Promise<SearchResult[]> {
 	return res.json();
 }
 
+export interface ModelInfo {
+	id: string;
+	name: string;
+	provider: string;
+}
+
+export async function listModels(): Promise<ModelInfo[]> {
+	const res = await fetch("/api/models");
+	if (!res.ok) return [];
+	return res.json();
+}
+
 export async function* streamChat(
 	messages: ChatMessage[],
 	personality: "greg" | "professional",
-	customSystemPrompt?: string,
+	opts?: { systemPrompt?: string; model?: string; provider?: string },
+	signal?: AbortSignal,
 ): AsyncGenerator<ChatSSEEvent> {
 	const body: Record<string, unknown> = { messages, personality };
-	if (customSystemPrompt) body.system_prompt = customSystemPrompt;
+	if (opts?.systemPrompt) body.system_prompt = opts.systemPrompt;
+	if (opts?.model) body.model = opts.model;
+	if (opts?.provider) body.provider = opts.provider;
 
 	const res = await fetch("/api/chat", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
+		signal,
 	});
 
 	if (!res.ok || !res.body) {

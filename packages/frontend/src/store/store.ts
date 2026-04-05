@@ -72,12 +72,23 @@ interface AppState {
 	chatMessages: ChatMsg[];
 	gregMode: boolean;
 	chatLoading: boolean;
+	selectedModel: string;
+	selectedProvider: string;
 	setChatMessages: (msgs: ChatMsg[]) => void;
 	addChatMessage: (msg: ChatMsg) => void;
 	updateLastAssistant: (updater: (msg: ChatMsg) => ChatMsg) => void;
 	setGregMode: (v: boolean) => void;
 	setChatLoading: (v: boolean) => void;
+	setModel: (model: string, provider: string) => void;
 	clearChat: () => void;
+
+	// Chat history
+	chatHistory: Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>;
+	activeChatId: string | null;
+	saveChat: () => void;
+	loadChat: (id: string) => void;
+	deleteChat: (id: string) => void;
+	newChat: () => void;
 
 	// Custom system prompt
 	customGregPrompt: string;
@@ -91,6 +102,10 @@ interface AppState {
 	updateIngestJob: (id: string, updates: Partial<IngestJob>) => void;
 	removeIngestJob: (id: string) => void;
 	clearDoneJobs: () => void;
+
+	// Code dropdown open states (persists across re-renders)
+	openCodeBlocks: Record<string, boolean>;
+	toggleCodeBlock: (key: string) => void;
 
 	// Search
 	searchResults: SearchResult[];
@@ -120,6 +135,8 @@ export const useStore = create<AppState>((set) => ({
 	chatMessages: [],
 	gregMode: (() => { try { return localStorage.getItem("greg-mode") !== "false"; } catch { return true; } })(),
 	chatLoading: false,
+	selectedModel: (() => { try { return localStorage.getItem("greg-model") ?? ""; } catch { return ""; } })(),
+	selectedProvider: (() => { try { return localStorage.getItem("greg-provider") ?? ""; } catch { return ""; } })(),
 	setChatMessages: (msgs) => set({ chatMessages: msgs }),
 	addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
 	updateLastAssistant: (updater) =>
@@ -135,7 +152,36 @@ export const useStore = create<AppState>((set) => ({
 		}),
 	setGregMode: (v) => { try { localStorage.setItem("greg-mode", String(v)); } catch {} set({ gregMode: v }); },
 	setChatLoading: (v) => set({ chatLoading: v }),
-	clearChat: () => set({ chatMessages: [], chatLoading: false }),
+	setModel: (model, provider) => {
+		try { localStorage.setItem("greg-model", model); localStorage.setItem("greg-provider", provider); } catch {}
+		set({ selectedModel: model, selectedProvider: provider });
+	},
+	clearChat: () => set((s) => { s.saveChat(); return { chatMessages: [], chatLoading: false, activeChatId: null }; }),
+
+	chatHistory: (() => { try { return JSON.parse(localStorage.getItem("greg-history") ?? "[]"); } catch { return []; } })(),
+	activeChatId: null,
+	saveChat: () => set((s) => {
+		if (s.chatMessages.length === 0) return {};
+		const id = s.activeChatId ?? `chat-${Date.now()}`;
+		const title = s.chatMessages.find((m) => m.role === "user")?.text.slice(0, 50) ?? "New chat";
+		const existing = s.chatHistory.filter((c) => c.id !== id);
+		const history = [{ id, title, messages: s.chatMessages, ts: Date.now() }, ...existing].slice(0, 50);
+		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
+		return { chatHistory: history, activeChatId: id };
+	}),
+	loadChat: (id) => set((s) => {
+		const chat = s.chatHistory.find((c) => c.id === id);
+		if (!chat) return {};
+		return { chatMessages: chat.messages, activeChatId: id };
+	}),
+	deleteChat: (id) => set((s) => {
+		const history = s.chatHistory.filter((c) => c.id !== id);
+		try { localStorage.setItem("greg-history", JSON.stringify(history)); } catch {}
+		const updates: Partial<AppState> = { chatHistory: history };
+		if (s.activeChatId === id) { updates.chatMessages = []; updates.activeChatId = null; }
+		return updates;
+	}),
+	newChat: () => set((s) => { s.saveChat(); return { chatMessages: [], activeChatId: null }; }),
 
 	customGregPrompt: "",
 	customProPrompt: "",
@@ -150,6 +196,11 @@ export const useStore = create<AppState>((set) => ({
 		})),
 	removeIngestJob: (id) => set((s) => ({ ingestJobs: s.ingestJobs.filter((j) => j.id !== id) })),
 	clearDoneJobs: () => set((s) => ({ ingestJobs: s.ingestJobs.filter((j) => j.status === "queued" || j.status === "running") })),
+
+	openCodeBlocks: {},
+	toggleCodeBlock: (key) => set((s) => ({
+		openCodeBlocks: { ...s.openCodeBlocks, [key]: !s.openCodeBlocks[key] },
+	})),
 
 	searchResults: [],
 	setSearchResults: (r) => set({ searchResults: r }),

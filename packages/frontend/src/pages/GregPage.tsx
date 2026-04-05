@@ -1,13 +1,14 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { C } from "../lib/constants";
 import { Ic } from "../lib/icons";
-import { streamChat } from "../lib/api";
+import { streamChat, listModels } from "../lib/api";
 import type { EndpointCard } from "../lib/api";
 import { useStore } from "../store/store";
+import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import DetailPanel from "../components/DetailPanel";
 
@@ -58,33 +59,92 @@ function CopyBtn({ text }: { text: string }) {
 			onMouseEnter={handleEnter}
 			onMouseLeave={handleLeave}
 			style={{
-				position: "absolute",
-				top: 6,
-				right: 6,
 				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
 				border: "none",
 				cursor: "pointer",
-				padding: 4,
-				borderRadius: 4,
+				padding: 8,
+				borderRadius: 6,
 				background: C.surfaceHover,
 				color: copied ? C.green : C.textDim,
-				opacity: copied ? 1 : 0.6,
-				zIndex: 1,
+				opacity: copied ? 1 : 0.7,
+				flexShrink: 0,
 				transition: "color 0.15s, opacity 0.15s",
+				width: 34,
+				height: 34,
 			}}
 		>
 			{copied ? (
-				<svg width={11} height={11} viewBox="0 0 12 12" fill="none">
+				<svg width={18} height={18} viewBox="0 0 12 12" fill="none">
 					<path d="M2 6.5l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
 				</svg>
 			) : (
-				Ic.copy()
+				Ic.copy(18)
 			)}
 		</button>
 	);
 }
 
-function GregMarkdown({ text }: { text: string }) {
+function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang: string; lineCount: number; blockKey: string }) {
+	const open = useStore((s) => !!s.openCodeBlocks[blockKey]);
+	const toggle = useStore((s) => s.toggleCodeBlock);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const [height, setHeight] = useState(0);
+
+	useEffect(() => {
+		if (open && contentRef.current) {
+			setHeight(contentRef.current.scrollHeight);
+		}
+	}, [open, code]);
+
+	return (
+		<div style={{ margin: "6px 0" }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+				<button
+					onClick={() => toggle(blockKey)}
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 6,
+						fontSize: 14,
+						color: C.accent,
+						background: C.accentDim,
+						border: `1px solid ${C.borderAccent}`,
+						borderRadius: 6,
+						padding: "4px 12px",
+						cursor: "pointer",
+						flex: 1,
+						textAlign: "left",
+					}}
+				>
+					<span style={{ fontFamily: "monospace", fontWeight: 500 }}>code: {lineCount} lines</span>
+					<span style={{ marginLeft: "auto", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
+						<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
+							<path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+						</svg>
+					</span>
+				</button>
+				<CopyBtn text={code} />
+			</div>
+			<div style={{ overflow: "hidden", maxHeight: open ? height : 0, transition: "max-height 0.25s ease", marginTop: open ? 4 : 0 }}>
+				<div ref={contentRef}>
+					<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" wrapLongLines customStyle={{ background: C.bg, borderRadius: 6 }} codeTagProps={{ style: { background: C.bg } }}>
+						{code}
+					</SyntaxHighlighter>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function stableKey(s: string): string {
+	let h = 0;
+	for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+	return String(h >>> 0);
+}
+
+function GregMarkdown({ text, msgKey }: { text: string; msgKey: number }) {
 	const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
 
 	return (
@@ -98,14 +158,9 @@ function GregMarkdown({ text }: { text: string }) {
 					if (match || code.includes("\n")) {
 						const rawLang = match?.[1] ?? "text";
 						const lang = langMap[rawLang] ?? rawLang;
-						return (
-							<div style={{ position: "relative" }}>
-								<CopyBtn text={code} />
-								<SyntaxHighlighter style={oneDark} language={lang} PreTag="div" wrapLongLines customStyle={{ background: C.bg, borderRadius: 4 }} codeTagProps={{ style: { background: C.bg } }}>
-									{code}
-								</SyntaxHighlighter>
-							</div>
-						);
+						const lineCount = code.split("\n").length;
+						const key = `msg-${msgKey}-${stableKey(code)}`;
+						return <CodeDropdown code={code} lang={lang} lineCount={lineCount} blockKey={key} />;
 					}
 
 					return (
@@ -130,7 +185,7 @@ function GregMarkdown({ text }: { text: string }) {
 					return <a href={String(href)} style={{ color: C.accent }} target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>;
 				},
 				img({ src, alt }) {
-					return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 6, marginTop: 4 }} />;
+					return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, marginTop: 6 }} />;
 				},
 				table({ children }) {
 					return <table style={{ borderCollapse: "collapse", width: "100%", margin: "6px 0", fontSize: 14 }}>{children as React.ReactNode}</table>;
@@ -180,7 +235,12 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 				}}
 			>
 				<span style={{ flex: 1, textAlign: "left" }}>
-					{endpoints.length} endpoint{endpoints.length !== 1 ? "s" : ""} found
+					{(() => {
+						const sorted = [...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+						const filtered = sorted.length <= 2 ? sorted : sorted.filter((ep) => (ep.score ?? 0) >= 0.75);
+						const count = filtered.length === 0 ? Math.min(2, sorted.length) : filtered.length;
+						return `${count} endpoint${count !== 1 ? "s" : ""} found`;
+					})()}
 				</span>
 				<span style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
 					<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
@@ -189,8 +249,12 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 				</span>
 			</button>
 			{open && (
-				<div style={{ marginTop: 3, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" }}>
-					{[...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => {
+				<div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3, maxHeight: 300, overflow: "auto" }}>
+					{(() => {
+					const sorted = [...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+					const filtered = sorted.length <= 2 ? sorted : sorted.filter((ep) => (ep.score ?? 0) >= 0.75);
+					return (filtered.length === 0 ? sorted.slice(0, 2) : filtered);
+				})().map((ep, j) => {
 						const mc = METHOD_COLORS[ep.method] ?? METHOD_COLORS.GET;
 						return (
 							<div
@@ -209,15 +273,20 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 								onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.borderHover; }}
 								onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
 							>
+								<span style={{ fontSize: 11, padding: "1px 5px", borderRadius: 3, background: C.accentDim, color: C.accent, fontWeight: 500, flexShrink: 0 }}>
+									{ep.api}
+								</span>
 								<span style={{ fontSize: 11, fontWeight: 600, padding: "1px 5px", borderRadius: 3, fontFamily: "monospace", background: mc.bg, color: mc.text, border: `1px solid ${mc.border}`, minWidth: 36, textAlign: "center" }}>
 									{ep.method}
 								</span>
 								<code style={{ fontSize: 13, fontFamily: "monospace", color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
 									{ep.path}
 								</code>
-								<span style={{ fontSize: 11, padding: "1px 5px", borderRadius: 3, background: C.accentDim, color: C.accent, fontWeight: 500, flexShrink: 0 }}>
-									{ep.api}
-								</span>
+								{ep.score != null && (
+									<span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace", flexShrink: 0 }}>
+										{Math.round(ep.score * 100)}%
+									</span>
+								)}
 							</div>
 						);
 					})}
@@ -226,6 +295,48 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 		</div>
 	);
 }
+
+const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
+	msg: ChatMsg;
+	i: number;
+	onSelectEndpoint: (ep: EndpointCard) => void;
+}) {
+	return (
+		<div style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+			<div style={{ maxWidth: "85%" }}>
+				{msg.role === "assistant" && (
+					<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+						<span style={{ fontFamily: "monospace", fontSize: 20, fontWeight: 600, color: C.green }}>
+							greg
+						</span>
+					</div>
+				)}
+				<div
+					style={{
+						padding: "14px 20px",
+						borderRadius: 10,
+						fontSize: 22,
+						lineHeight: 1.6,
+						background: msg.role === "user" ? C.userBg : C.gregBg,
+						border: `1px solid ${msg.role === "user" ? C.borderAccent : C.border}`,
+						color: msg.role === "user" ? C.text : C.textMuted,
+					}}
+				>
+					{msg.role === "user" ? (
+						msg.text
+					) : msg.streaming ? (
+						<span style={{ whiteSpace: "pre-wrap" }}>{cleanText(msg.text) || "..."}</span>
+					) : (
+						<GregMarkdown text={cleanText(msg.text)} msgKey={i} />
+					)}
+				</div>
+				{msg.endpoints && msg.endpoints.length > 0 && (
+					<EndpointDropdown endpoints={msg.endpoints} onSelect={onSelectEndpoint} />
+				)}
+			</div>
+		</div>
+	);
+});
 
 const GREG_GREETINGS = [
 	"greg here. what api u need",
@@ -251,32 +362,71 @@ export default function GregPage() {
 		updateLastAssistant,
 		setGregMode,
 		setChatLoading,
-		clearChat,
 		detailItem,
 		detailType,
 		setDetail,
 		customGregPrompt,
 		customProPrompt,
+		selectedModel,
+		selectedProvider,
+		setModel,
+		chatHistory,
+		newChat,
+		loadChat,
+		deleteChat,
+		saveChat,
 	} = useStore();
 
 	const [greetingGif, setGreetingGif] = useState<string | null>(null);
+	const [greeting, setGreetingText] = useState(() => getGreeting(gregMode));
+	const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
+	const [sidebarOpen, setSidebarOpen] = useState(true);
+	const abortRef = useRef<AbortController | null>(null);
+
+	useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
+	useEffect(() => { setGreetingText(getGreeting(gregMode)); }, [gregMode]);
 	useEffect(() => {
 		if (!gregMode) return;
 		fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url)).catch(() => {});
-	}, [gregMode]);
+	}, []);
 
+	const handleSelectEndpoint = useCallback((ep: EndpointCard) => setDetail(ep, "endpoints"), [setDetail]);
 	const [input, setInput] = useState("");
 	const messagesEndRef = useRef<HTMLDivElement>(null);
+	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const [userScrolled, setUserScrolled] = useState(false);
+	const userScrolledRef = useRef(false);
 
+	// Check if user has scrolled up — use ref to avoid re-render storms
+	const handleScroll = useCallback(() => {
+		const el = scrollContainerRef.current;
+		if (!el) return;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+		if (userScrolledRef.current !== !atBottom) {
+			userScrolledRef.current = !atBottom;
+			setUserScrolled(!atBottom);
+		}
+	}, []);
+
+	// Auto-scroll only if user hasn't scrolled up
 	useEffect(() => {
-		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+		if (!userScrolledRef.current) {
+			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
 	}, [chatMessages]);
+
+	const scrollToBottom = () => {
+		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+		userScrolledRef.current = false;
+		setUserScrolled(false);
+	};
 
 	const handleSend = async () => {
 		const text = input.trim();
 		if (!text || chatLoading) return;
 
 		setInput("");
+		setUserScrolled(false);
 		addChatMessage({ role: "user", text });
 		addChatMessage({ role: "assistant", text: "", streaming: true });
 		setChatLoading(true);
@@ -287,19 +437,32 @@ export default function GregPage() {
 		];
 
 		let accumulated = "";
-		let endpoints: EndpointCard[] = [];
+		const endpointMap = new Map<string, EndpointCard>();
 
 		try {
 			const customPrompt = gregMode ? customGregPrompt : customProPrompt;
-			for await (const event of streamChat(history, gregMode ? "greg" : "professional", customPrompt || undefined)) {
+			const abort = new AbortController();
+			abortRef.current = abort;
+			for await (const event of streamChat(
+				history,
+				gregMode ? "greg" : "professional",
+				{ systemPrompt: customPrompt || undefined, model: selectedModel || undefined, provider: selectedProvider || undefined },
+				abort.signal,
+			)) {
 				switch (event.type) {
 					case "text":
 						accumulated += event.text ?? "";
 						updateLastAssistant((m) => ({ ...m, text: accumulated }));
 						break;
 					case "endpoints":
-						// Collect but don't show yet — wait for done
-						endpoints = [...endpoints, ...(event.data ?? [])];
+						// Deduplicate by method+path, keep highest score
+						for (const ep of event.data ?? []) {
+							const key = `${ep.method}:${ep.path}:${ep.api}`;
+							const existing = endpointMap.get(key);
+							if (!existing || (ep.score ?? 0) > (existing.score ?? 0)) {
+								endpointMap.set(key, ep);
+							}
+						}
 						break;
 					case "error":
 						accumulated += `\n[error: ${event.error}]`;
@@ -314,7 +477,10 @@ export default function GregPage() {
 			updateLastAssistant((m) => ({ ...m, text: accumulated }));
 		}
 
-		updateLastAssistant((m) => ({ ...m, streaming: false, endpoints: endpoints.length > 0 ? endpoints : undefined }));
+		abortRef.current = null;
+		const dedupedEndpoints = [...endpointMap.values()];
+		updateLastAssistant((m) => ({ ...m, streaming: false, endpoints: dedupedEndpoints.length > 0 ? dedupedEndpoints : undefined }));
+		saveChat();
 		setChatLoading(false);
 	};
 
@@ -326,14 +492,14 @@ export default function GregPage() {
 	};
 
 	return (
-		<div style={{ padding: "14px 16px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
+		<div style={{ padding: "20px 24px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
 			{/* Chat header */}
-			<div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 14, flexShrink: 0 }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexShrink: 0 }}>
 				<div
 					style={{
-						width: 38,
-						height: 38,
-						borderRadius: 6,
+						width: 56,
+						height: 56,
+						borderRadius: 10,
 						background: C.gregBg,
 						border: `1px solid ${C.border}`,
 						display: "flex",
@@ -341,10 +507,10 @@ export default function GregPage() {
 						justifyContent: "center",
 					}}
 				>
-					<span style={{ fontFamily: "monospace", fontWeight: 700, color: C.green, fontSize: 16 }}>G</span>
+					<span style={{ fontFamily: "monospace", fontWeight: 700, color: C.green, fontSize: 24 }}>G</span>
 				</div>
-				<span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>greg</span>
-				<span style={{ fontSize: 14, color: C.textDim }}>knows ur apis</span>
+				<span style={{ fontSize: 24, fontWeight: 600, color: C.text }}>greg</span>
+				<span style={{ fontSize: 20, color: C.textDim }}>{gregMode ? "knows ur apis" : "API Documentation Assistant"}</span>
 				<span style={{ flex: 1 }} />
 
 				{/* Personality toggle */}
@@ -353,21 +519,21 @@ export default function GregPage() {
 					style={{
 						display: "flex",
 						alignItems: "center",
-						gap: 7,
+						gap: 10,
 						cursor: "pointer",
-						fontSize: 14,
+						fontSize: 20,
 						color: C.textDim,
-						padding: "4px 11px",
-						borderRadius: 6,
+						padding: "6px 16px",
+						borderRadius: 8,
 						background: C.surface,
 						border: `1px solid ${C.border}`,
 					}}
 				>
 					<div
 						style={{
-							width: 30,
-							height: 17,
-							borderRadius: 6,
+							width: 44,
+							height: 24,
+							borderRadius: 12,
 							background: gregMode ? "rgba(52,211,153,0.3)" : C.border,
 							position: "relative",
 							transition: "background 0.15s",
@@ -375,45 +541,150 @@ export default function GregPage() {
 					>
 						<div
 							style={{
-								width: 11,
-								height: 11,
-								borderRadius: 6,
+								width: 16,
+								height: 16,
+								borderRadius: 8,
 								background: gregMode ? C.green : C.textDim,
 								position: "absolute",
-								top: 3,
-								left: gregMode ? 16 : 3,
+								top: 4,
+								left: gregMode ? 24 : 4,
 								transition: "left 0.15s",
 							}}
 						/>
 					</div>
-					{gregMode ? "greg mode" : "professional"}
+					{gregMode ? "greg" : "professional"}
 				</div>
 
-				{/* New chat */}
+				{/* Model picker */}
+				<select
+					value={selectedModel || ""}
+					onChange={(e) => {
+						const m = models.find((x) => x.id === e.target.value);
+						if (m) setModel(m.id, m.provider);
+					}}
+					style={{
+						height: 36,
+						padding: "0 10px",
+						background: C.surface,
+						border: `1px solid ${C.border}`,
+						borderRadius: 8,
+						fontSize: 14,
+						color: C.textMuted,
+					}}
+				>
+					<option value="">Default model</option>
+					{models.filter((m) => m.provider === "anthropic").length > 0 && (
+						<optgroup label="Anthropic">
+							{models.filter((m) => m.provider === "anthropic").map((m) => (
+								<option key={m.id} value={m.id}>{m.name}</option>
+							))}
+						</optgroup>
+					)}
+					{models.filter((m) => m.provider === "ollama").length > 0 && (
+						<optgroup label="Ollama">
+							{models.filter((m) => m.provider === "ollama").map((m) => (
+								<option key={m.id} value={m.id}>{m.name}</option>
+							))}
+						</optgroup>
+					)}
+				</select>
+
+				{/* History */}
 				<button
-					onClick={clearChat}
+					onClick={() => setSidebarOpen(!sidebarOpen)}
 					style={{
 						display: "flex",
 						alignItems: "center",
-						gap: 4,
-						fontSize: 14,
+						gap: 6,
+						fontSize: 16,
 						border: `1px solid ${C.border}`,
 						cursor: "pointer",
-						padding: "4px 10px",
-						borderRadius: 4,
+						padding: "6px 12px",
+						borderRadius: 8,
 						background: C.surface,
 						color: C.textDim,
 					}}
 				>
-					{Ic.plus(14)} new chat
+					{Ic.doc(16)}
+				</button>
+
+				{/* New chat */}
+				<button
+					onClick={newChat}
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 6,
+						fontSize: 20,
+						border: `1px solid ${C.border}`,
+						cursor: "pointer",
+						padding: "6px 16px",
+						borderRadius: 8,
+						background: C.surface,
+						color: C.textDim,
+					}}
+				>
+					{Ic.plus(18)}
 				</button>
 			</div>
 
+			{/* Main layout: sidebar + chat */}
+			<div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+
+			{/* Chat history sidebar */}
+			{sidebarOpen && (
+				<div style={{
+					width: 260, flexShrink: 0, background: C.surface,
+					borderRight: `1px solid ${C.border}`, overflow: "auto", padding: "12px 10px",
+				}}>
+					<div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+						<span style={{ fontSize: 15, fontWeight: 600, color: C.text, flex: 1 }}>History</span>
+						<button onClick={newChat} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.accent, display: "flex", padding: 4 }} title="New chat">
+							{Ic.plus(14)}
+						</button>
+						<button onClick={() => setSidebarOpen(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", padding: 4 }}>
+							{Ic.x(14)}
+						</button>
+					</div>
+					{chatHistory.length === 0 && (
+						<span style={{ fontSize: 13, color: C.textDim }}>No chats yet</span>
+					)}
+					{chatHistory.map((chat) => {
+						const isActive = chat.id === useStore.getState().activeChatId;
+						return (
+							<div
+								key={chat.id}
+								onClick={() => loadChat(chat.id)}
+								style={{
+									display: "flex", alignItems: "center", gap: 6, padding: "6px 8px",
+									borderRadius: 6, cursor: "pointer", marginBottom: 2,
+									background: isActive ? C.surfaceActive : "transparent",
+									borderLeft: isActive ? `2px solid ${C.accent}` : "2px solid transparent",
+								}}
+								onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = C.surfaceHover; }}
+								onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+							>
+								<span style={{ fontSize: 13, color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+									{chat.title}
+								</span>
+								<button
+									onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
+									style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textDim, display: "flex", flexShrink: 0, padding: 2, opacity: 0.5 }}
+								>
+									{Ic.x(11)}
+								</button>
+							</div>
+						);
+					})}
+				</div>
+			)}
+
 			{/* Main area */}
-			<div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
+			<div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", padding: "0 20px" }}>
+			<div style={{ display: "flex", gap: 20, flex: 1, minHeight: 0 }}>
 				{/* Messages */}
-				<div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-					<div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+				<div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", position: "relative" }}>
+					<div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 12, position: "relative" }}>
 						{chatMessages.length === 0 && (
 							<div
 								style={{
@@ -422,15 +693,15 @@ export default function GregPage() {
 									alignItems: "center",
 									justifyContent: "center",
 									flexDirection: "column",
-									gap: 11,
+									gap: 16,
 									color: C.textDim,
 								}}
 							>
 								<div
 									style={{
-										width: 54,
-										height: 54,
-										borderRadius: 8,
+										width: 80,
+										height: 80,
+										borderRadius: 12,
 										background: C.gregBg,
 										border: `1px solid ${C.border}`,
 										display: "flex",
@@ -438,56 +709,54 @@ export default function GregPage() {
 										justifyContent: "center",
 									}}
 								>
-									<span style={{ fontFamily: "monospace", fontWeight: 700, color: C.green, fontSize: 25 }}>G</span>
+									<span style={{ fontFamily: "monospace", fontWeight: 700, color: C.green, fontSize: 38 }}>G</span>
 								</div>
 								{gregMode && greetingGif && (
-									<img src={greetingGif} alt="greg" style={{ maxHeight: 180, borderRadius: 8 }} />
+									<img src={greetingGif} alt="greg" style={{ maxHeight: 720, borderRadius: 12 }} />
 								)}
-								<span style={{ fontSize: 16 }}>
-									{getGreeting(gregMode)}
+								<span style={{ fontSize: 24 }}>
+									{greeting}
 								</span>
 							</div>
 						)}
 						{chatMessages.map((msg, i) => (
-							<div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
-								<div style={{ maxWidth: "85%" }}>
-									{msg.role === "assistant" && (
-										<div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-											<span style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 600, color: C.green }}>
-												greg
-											</span>
-										</div>
-									)}
-									<div
-										style={{
-											padding: "10px 14px",
-											borderRadius: 6,
-											fontSize: 16,
-											lineHeight: 1.5,
-											background: msg.role === "user" ? C.userBg : C.gregBg,
-											border: `1px solid ${msg.role === "user" ? C.borderAccent : C.border}`,
-											color: msg.role === "user" ? C.text : C.textMuted,
-										}}
-									>
-										{msg.role === "user" ? (
-											msg.text
-										) : msg.streaming ? (
-											<span style={{ whiteSpace: "pre-wrap" }}>{cleanText(msg.text) || "..."}</span>
-										) : (
-											<GregMarkdown text={cleanText(msg.text)} />
-										)}
-									</div>
-									{msg.endpoints && msg.endpoints.length > 0 && (
-										<EndpointDropdown endpoints={msg.endpoints} onSelect={(ep) => setDetail(ep, "endpoints")} />
-									)}
-								</div>
-							</div>
+							<ChatMessage key={i} msg={msg} i={i} onSelectEndpoint={handleSelectEndpoint} />
 						))}
 						<div ref={messagesEndRef} />
 					</div>
 
+					{/* Scroll to bottom button */}
+					{userScrolled && (
+						<button
+							onClick={scrollToBottom}
+							style={{
+								position: "absolute",
+								bottom: 90,
+								left: "50%",
+								transform: "translateX(-50%)",
+								display: "flex",
+								alignItems: "center",
+								gap: 6,
+								padding: "8px 16px",
+								borderRadius: 20,
+								border: `1px solid ${C.borderAccent}`,
+								background: C.surface,
+								color: C.accent,
+								cursor: "pointer",
+								fontSize: 14,
+								boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+								zIndex: 10,
+							}}
+						>
+							<svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+								<path d="M3 5.5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+							</svg>
+							Scroll to bottom
+						</button>
+					)}
+
 					{/* Input */}
-					<div style={{ display: "flex", gap: 8, marginTop: 17, flexShrink: 0 }}>
+					<div style={{ display: "flex", gap: 12, marginTop: 24, flexShrink: 0 }}>
 						<input
 							type="text"
 							placeholder={gregMode ? "talk to greg..." : "Search API documentation..."}
@@ -496,46 +765,66 @@ export default function GregPage() {
 							onKeyDown={handleKeyDown}
 							style={{
 								flex: 1,
-								height: 46,
-								padding: "0 14px",
+								height: 64,
+								padding: "0 20px",
 								background: C.surface,
 								border: `1px solid ${C.border}`,
-								borderRadius: 6,
-								fontSize: 16,
+								borderRadius: 10,
+								fontSize: 22,
 								color: C.text,
 								outline: "none",
 							}}
 							onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "rgba(129,140,248,0.4)")}
 							onBlur={(e) => ((e.target as HTMLElement).style.borderColor = C.border)}
 						/>
-						<button
-							onClick={handleSend}
-							disabled={chatLoading}
-							style={{
-								width: 46,
-								height: 46,
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "center",
-								background: C.accentMuted,
-								border: "none",
-								borderRadius: 6,
-								cursor: chatLoading ? "not-allowed" : "pointer",
-								color: C.accent,
-								opacity: chatLoading ? 0.5 : 1,
-							}}
-						>
-							{Ic.send()}
-						</button>
+						{chatLoading ? (
+							<button
+								onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
+								style={{
+									width: 64,
+									height: 64,
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "center",
+									background: "rgba(248,113,113,0.1)",
+									border: "none",
+									borderRadius: 10,
+									cursor: "pointer",
+									color: "#F87171",
+								}}
+							>
+								<svg width={22} height={22} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
+							</button>
+						) : (
+							<button
+								onClick={handleSend}
+								style={{
+									width: 64,
+									height: 64,
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "center",
+									background: C.accentMuted,
+									border: "none",
+									borderRadius: 10,
+									cursor: "pointer",
+									color: C.accent,
+								}}
+							>
+								{Ic.send(22)}
+							</button>
+						)}
 					</div>
 				</div>
 
 				{/* Detail panel */}
 				{detailItem && (
-					<div style={{ width: 430, flexShrink: 0 }}>
+					<div style={{ width: 550, flexShrink: 0 }}>
 						<DetailPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
 					</div>
 				)}
+			</div>
+			</div>
 			</div>
 		</div>
 	);

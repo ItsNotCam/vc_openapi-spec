@@ -15,10 +15,17 @@ export default function DocsPage() {
 	const selectedApi = docsApi || (apis.length > 0 ? apis[0].name : "");
 	const apiInfo = apis.find((a) => a.name === selectedApi);
 
-	// Pass method+path as query params — the Swagger UI page script handles scrolling
-	const qs = docsAnchor
-		? `?method=${encodeURIComponent(docsAnchor.method)}&path=${encodeURIComponent(docsAnchor.path)}`
-		: "";
+	const theme = useStore((s) => s.theme);
+	const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+	// Pass method+path+theme as query params
+	const params = new URLSearchParams();
+	if (docsAnchor) {
+		params.set("method", docsAnchor.method);
+		params.set("path", docsAnchor.path);
+	}
+	params.set("theme", isDark ? "dark" : "light");
+	const qs = `?${params}`;
 
 	const iframeSrc = selectedApi ? `/openapi/docs/${selectedApi}${qs}` : "";
 

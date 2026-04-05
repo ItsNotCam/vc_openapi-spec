@@ -16,6 +16,7 @@ interface ChatRequest {
 	messages: ChatMessage[];
 	personality: "greg" | "professional";
 	provider?: "anthropic" | "ollama";
+	model?: string;
 	system_prompt?: string;
 }
 
@@ -31,12 +32,34 @@ Rules:
 - DO NOT narrate your thought process. No "greg look" or "greg check" or "wait greg search". Just give the answer.
 - DO NOT explain what you are about to do. Just do it and present results.
 - Use your tools silently. The user sees the endpoint cards automatically — just describe what they need to know.
+- NEVER guess, assume, or make up ANY information about APIs, endpoints, fields, parameters, query params, paths, or response shapes. EVERY claim you make — including parameter names, field names, and types — must come DIRECTLY from a tool call result. If you haven't searched for it, you don't know it. If the tool result doesn't mention a parameter, that parameter DOES NOT EXIST.
+- Before answering ANY question: call list_apis to know what you have, then search_endpoints or get_endpoint to find the actual data. Do not skip this step. Do not rely on memory from earlier in the conversation — always re-verify with tools.
+- When writing code that uses query params, request bodies, or response fields: you MUST use get_endpoint first to get the full endpoint details, then ONLY use the exact parameter names and types shown in the tool result. Do NOT invent parameter names. If the tool says the params are "minscore, from, to, did" then those are the ONLY params — do not add others.
+- NEVER claim you don't have an API without calling list_apis first. NEVER describe an endpoint's fields or behavior without calling get_endpoint first. If a tool returns no results, THEN you can say you don't have it.
+- If the user asks about multiple APIs, search EACH ONE separately before responding. Do not combine or guess across APIs.
 - When you output code examples, use markdown code blocks with the language specified (e.g. \`\`\`typescript).
 - Keep responses to 1-3 sentences max. greg does not write paragraphs.
 - greg does not use contractions or slang. minimum viable language.
 - When mentioning an endpoint path in text, always wrap it in backticks like \`/v1/messages\` or \`POST /assets/_search\`.
-- If the user asks something that involves multiple API calls, chaining requests, or non-trivial logic, write a short typescript snippet using fetch(). Keep it as simple and clean as possible — no type definitions, no verbose error handling, just the bare logic.
-- Code blocks must be commented but CONCISE — under 25 lines total. Comment every meaningful step in professional tone (NOT greg voice), but keep the code itself minimal. No boilerplate.
+- If the user asks something that involves multiple API calls, chaining requests, or non-trivial logic, provide code examples in three languages: **TypeScript**, **Python**, and **curl**. Format each under its own heading like:
+
+**TypeScript:**
+\`\`\`typescript
+// code here
+\`\`\`
+
+**Python:**
+\`\`\`python
+# code here
+\`\`\`
+
+**curl:**
+\`\`\`bash
+# code here
+\`\`\`
+
+- In code: any URL, API key, secret, token, or instance-specific value MUST be a const/variable declared at the top. Never hardcode URLs inline.
+- Code blocks must be commented but CONCISE — under 25 lines each. Comment every meaningful step in professional tone (NOT greg voice), but keep the code itself minimal. No boilerplate.
 - If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats (e.g. "sorry cat", "cat confused", "cat celebration").
 - MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "sorry cat", "cat oops", "embarrassed cat", or "my bad cat". This is not optional. Every apology needs a cat GIF. No exceptions.
 
@@ -241,18 +264,6 @@ async function executeTool(
 
 		case "list_endpoints": {
 			const eps = await retriever.listEndpoints(input.api as string);
-			for (const ep of eps) {
-				const m = ep.metadata;
-				endpoints.push({
-					method: m.method ?? "",
-					path: m.path ?? "",
-					api: m.api ?? "",
-					description: (m.full_text ?? ep.text).split("\n").slice(0, 3).join(" ").slice(0, 200),
-					score: 1,
-					full_text: m.full_text ?? ep.text,
-					response_schema: m.response_schema ?? "",
-				});
-			}
 			return {
 				result: eps.length === 0
 					? `No endpoints for '${input.api}'.`
@@ -266,11 +277,13 @@ async function executeTool(
 			try {
 				const q = encodeURIComponent(String(input.query ?? "reaction"));
 				const res = await fetch(
-					`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=1&rating=g&lang=en`,
+					`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&rating=g&lang=en`,
 				);
 				if (!res.ok) return { result: "GIF search failed", endpoints: [] };
-				const data = await res.json() as { data: Array<{ images: { fixed_height: { url: string } } }> };
-				const gif = data.data?.[0]?.images?.fixed_height?.url;
+				const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
+				const blocked = /lebron|james|lbj/i;
+				const match = data.data?.find((g) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
+				const gif = match?.images?.original?.url;
 				if (!gif) return { result: "No GIF found", endpoints: [] };
 				return { result: `![gif](${gif})`, endpoints: [] };
 			} catch {
@@ -319,7 +332,7 @@ async function chatAnthropic(
 	}));
 
 	// Tool use loop — up to 5 rounds
-	for (let round = 0; round < 5; round++) {
+	for (let round = 0; round < 10; round++) {
 		const stream = client.messages.stream({
 			model: config.LLM_MODEL,
 			max_tokens: 1024,
@@ -410,7 +423,7 @@ async function chatOllama(
 		...messages.map((m) => ({ role: m.role, content: m.content })),
 	];
 
-	for (let round = 0; round < 5; round++) {
+	for (let round = 0; round < 10; round++) {
 		const res = await fetch(`${baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -627,6 +640,9 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	const defaultPrompt = personality === "greg" ? GREG_PROMPT : PROFESSIONAL_PROMPT;
 	const systemPrompt = body.system_prompt || defaultPrompt;
 	const provider = body.provider ?? config.LLM_PROVIDER;
+	// Temporarily override model if specified in request
+	const origModel = config.LLM_MODEL;
+	if (body.model) (config as Record<string, unknown>).LLM_MODEL = body.model;
 
 	if (provider === "anthropic" && !config.ANTHROPIC_API_KEY) {
 		return c.json({ error: "ANTHROPIC_API_KEY not set" }, 500);
@@ -658,6 +674,7 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 			console.error("[chat] error:", msg);
 			send({ type: "error", error: msg });
 		} finally {
+			(config as Record<string, unknown>).LLM_MODEL = origModel;
 			writer.close();
 		}
 	})();

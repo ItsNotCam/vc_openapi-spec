@@ -289,13 +289,19 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 <html><head><meta charset="utf-8"/><title>${apiName} — greg</title>
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
+/* -- shared -- */
+.swagger-ui .topbar{display:none}
+.swagger-ui{font-family:-apple-system,"Segoe UI",sans-serif}
+.swagger-ui .opblock-section-header{box-shadow:none!important}
+.swagger-ui .responses-inner{background:transparent!important}
+</style>
+<style id="theme-dark">
 :root{color-scheme:dark}
 body{margin:0;background:#0D0D10;color:#E4E4E7}
-.swagger-ui .topbar{display:none}
-.swagger-ui{background:#0D0D10;color:#E4E4E7;font-family:-apple-system,"Segoe UI",sans-serif}
+.swagger-ui{background:#0D0D10;color:#E4E4E7}
 .swagger-ui .info .title,.swagger-ui .opblock-tag{color:#E4E4E7}
-.swagger-ui .info p,.swagger-ui .info li,.swagger-ui .info table,.swagger-ui p,.swagger-ui label,.swagger-ui .parameter__name,.swagger-ui .parameter__type,.swagger-ui table thead tr th,.swagger-ui table thead tr td,.swagger-ui .response-col_status,.swagger-ui .response-col_description,.swagger-ui .model-title,.swagger-ui .model,.swagger-ui .renderedMarkdown p{color:#8B8B96}
-.swagger-ui .opblock .opblock-summary-description,.swagger-ui .opblock-description-wrapper p{color:#8B8B96}
+.swagger-ui .info p,.swagger-ui .info li,.swagger-ui .info table,.swagger-ui p,.swagger-ui label,.swagger-ui .parameter__name,.swagger-ui .parameter__type,.swagger-ui table thead tr th,.swagger-ui table thead tr td,.swagger-ui .response-col_status,.swagger-ui .response-col_description,.swagger-ui .model-title,.swagger-ui .model,.swagger-ui .renderedMarkdown p{color:#B0B0BA}
+.swagger-ui .opblock .opblock-summary-description,.swagger-ui .opblock-description-wrapper p{color:#B0B0BA}
 .swagger-ui .scheme-container,.swagger-ui .loading-container{background:#131317}
 .swagger-ui select,.swagger-ui input[type=text],.swagger-ui textarea{background:#131317;color:#E4E4E7;border-color:rgba(255,255,255,0.12)}
 .swagger-ui .btn{background:#131317;color:#E4E4E7;border-color:rgba(255,255,255,0.12)}
@@ -304,7 +310,7 @@ body{margin:0;background:#0D0D10;color:#E4E4E7}
 .swagger-ui .opblock .opblock-summary{border-color:rgba(255,255,255,0.06)}
 .swagger-ui .opblock-body pre.microlight,.swagger-ui .highlight-code>.microlight{background:#0D0D10!important;color:#E4E4E7;border-radius:4px}
 .swagger-ui .opblock-body pre span{color:#E4E4E7!important}
-.swagger-ui .responses-wrapper,.swagger-ui .response-col_description__inner,.swagger-ui .parameters-col_description{color:#8B8B96}
+.swagger-ui .responses-wrapper,.swagger-ui .response-col_description__inner,.swagger-ui .parameters-col_description{color:#B0B0BA}
 .swagger-ui section.models{border-color:rgba(255,255,255,0.06)}
 .swagger-ui section.models .model-container{background:#131317;border-color:rgba(255,255,255,0.06)}
 .swagger-ui .model-box{background:#131317}
@@ -319,24 +325,23 @@ body{margin:0;background:#0D0D10;color:#E4E4E7}
 .swagger-ui .opblock.opblock-delete .opblock-summary{border-color:rgba(248,113,113,0.15)}
 .swagger-ui .opblock.opblock-patch{background:rgba(192,132,252,0.04);border-color:rgba(192,132,252,0.15)}
 .swagger-ui .opblock.opblock-patch .opblock-summary{border-color:rgba(192,132,252,0.15)}
-.swagger-ui .tab li{color:#8B8B96}
+.swagger-ui .tab li{color:#B0B0BA}
 .swagger-ui .tab li.active{color:#E4E4E7}
 .swagger-ui .response-content-type.controls-accept-header select{background:#131317;color:#E4E4E7}
 .swagger-ui .model-toggle::after{filter:invert(1)}
-.swagger-ui svg.arrow,.swagger-ui button.model-box-control svg,.swagger-ui .expand-operation svg{fill:#8B8B96!important}
+.swagger-ui svg.arrow,.swagger-ui button.model-box-control svg,.swagger-ui .expand-operation svg{fill:#B0B0BA!important}
 .swagger-ui .opblock-summary-control svg{fill:#E4E4E7!important}
-.swagger-ui svg:not([fill="none"]){fill:#8B8B96}
+.swagger-ui svg:not([fill="none"]){fill:#B0B0BA}
 .swagger-ui a.nostyle,.swagger-ui a.nostyle:visited{color:#818CF8}
-.swagger-ui .opblock-section-header{background:#19191F!important;border-color:rgba(255,255,255,0.06)!important;box-shadow:none!important}
-.swagger-ui .opblock-section-header h4,.swagger-ui .opblock-section-header>label,.swagger-ui .opblock-section-header .btn{color:#8B8B96!important}
-.swagger-ui .opblock-body .opblock-section-header label,.swagger-ui .response-controls{color:#8B8B96!important}
-.swagger-ui .responses-header td.col_header{color:#8B8B96!important}
+.swagger-ui .opblock-section-header{background:#19191F!important;border-color:rgba(255,255,255,0.06)!important}
+.swagger-ui .opblock-section-header h4,.swagger-ui .opblock-section-header>label,.swagger-ui .opblock-section-header .btn{color:#B0B0BA!important}
+.swagger-ui .opblock-body .opblock-section-header label,.swagger-ui .response-controls{color:#B0B0BA!important}
+.swagger-ui .responses-header td.col_header{color:#B0B0BA!important}
 .swagger-ui .opblock .opblock-section-header{background:#19191F!important}
-.swagger-ui table.headers td{color:#8B8B96}
-.swagger-ui .response-col_links{color:#8B8B96}
-.swagger-ui .responses-inner{background:transparent!important}
+.swagger-ui table.headers td{color:#B0B0BA}
+.swagger-ui .response-col_links{color:#B0B0BA}
 .swagger-ui .parameters-col_description input,.swagger-ui .parameters-col_description select{background:#131317;color:#E4E4E7;border-color:rgba(255,255,255,0.12)}
-.swagger-ui .opblock-body h4,.swagger-ui .opblock-body h5,.swagger-ui .responses-inner h4,.swagger-ui .responses-inner h5{color:#8B8B96}
+.swagger-ui .opblock-body h4,.swagger-ui .opblock-body h5,.swagger-ui .responses-inner h4,.swagger-ui .responses-inner h5{color:#B0B0BA}
 .swagger-ui .opblock-summary-method{color:#fff}
 .swagger-ui .opblock-summary-path,.swagger-ui .opblock-summary-path a{color:#E4E4E7}
 .swagger-ui .markdown h1,.swagger-ui .markdown h2,.swagger-ui .markdown h3,.swagger-ui .markdown h4,.swagger-ui .markdown h5{color:#E4E4E7}
@@ -345,6 +350,43 @@ body{margin:0;background:#0D0D10;color:#E4E4E7}
 .swagger-ui .parameter__name.required span{color:#F87171}
 .swagger-ui .parameter__name.required::after{color:#F87171}
 </style>
+<style id="theme-light">
+:root{color-scheme:light}
+body{margin:0;background:#FFFFFF;color:#18181B}
+.swagger-ui{background:#FFFFFF;color:#18181B}
+.swagger-ui .info .title,.swagger-ui .opblock-tag{color:#18181B}
+.swagger-ui .info p,.swagger-ui .info li,.swagger-ui .info table,.swagger-ui p,.swagger-ui label,.swagger-ui .parameter__name,.swagger-ui .parameter__type,.swagger-ui table thead tr th,.swagger-ui table thead tr td,.swagger-ui .response-col_status,.swagger-ui .response-col_description,.swagger-ui .model-title,.swagger-ui .model,.swagger-ui .renderedMarkdown p{color:#52525B}
+.swagger-ui .opblock .opblock-summary-description,.swagger-ui .opblock-description-wrapper p{color:#52525B}
+.swagger-ui .scheme-container,.swagger-ui .loading-container{background:#F4F4F5}
+.swagger-ui select,.swagger-ui input[type=text],.swagger-ui textarea{background:#FFFFFF;color:#18181B;border-color:rgba(0,0,0,0.15)}
+.swagger-ui .btn{background:#F4F4F5;color:#18181B;border-color:rgba(0,0,0,0.12)}
+.swagger-ui .btn:hover{background:#E8E8EC}
+.swagger-ui .opblock{border-color:rgba(0,0,0,0.08)}
+.swagger-ui .opblock .opblock-summary{border-color:rgba(0,0,0,0.08)}
+.swagger-ui .opblock-body pre.microlight,.swagger-ui .highlight-code>.microlight{background:#F4F4F5!important;color:#18181B;border-radius:4px}
+.swagger-ui .opblock-body pre span{color:#18181B!important}
+.swagger-ui section.models{border-color:rgba(0,0,0,0.08)}
+.swagger-ui section.models .model-container{border-color:rgba(0,0,0,0.08)}
+.swagger-ui .opblock-tag{border-bottom-color:rgba(0,0,0,0.08)}
+.swagger-ui .opblock-section-header{background:#F4F4F5!important;border-color:rgba(0,0,0,0.08)!important}
+.swagger-ui .opblock-section-header h4,.swagger-ui .opblock-section-header>label,.swagger-ui .opblock-section-header .btn{color:#52525B!important}
+.swagger-ui .opblock .opblock-section-header{background:#F4F4F5!important}
+.swagger-ui .opblock-body h4,.swagger-ui .opblock-body h5,.swagger-ui .responses-inner h4,.swagger-ui .responses-inner h5{color:#52525B}
+.swagger-ui .opblock-summary-path,.swagger-ui .opblock-summary-path a{color:#18181B}
+.swagger-ui .markdown h1,.swagger-ui .markdown h2,.swagger-ui .markdown h3,.swagger-ui .markdown h4,.swagger-ui .markdown h5{color:#18181B}
+.swagger-ui a.nostyle,.swagger-ui a.nostyle:visited{color:#6366F1}
+.swagger-ui .prop-type{color:#6366F1}
+.swagger-ui .prop-format{color:#A1A1AA}
+.swagger-ui .parameter__name.required span{color:#DC2626}
+.swagger-ui .parameter__name.required::after{color:#DC2626}
+.swagger-ui .parameters-col_description input,.swagger-ui .parameters-col_description select{background:#FFFFFF;color:#18181B;border-color:rgba(0,0,0,0.15)}
+</style>
+<script>
+(function(){
+  var t=new URLSearchParams(location.search).get("theme")||"dark";
+  document.getElementById("theme-"+(t==="light"?"dark":"light")).disabled=true;
+})();
+</script>
 </head><body><div id="swagger-ui"></div>
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
 <script>
@@ -475,15 +517,42 @@ onComplete:function(){
 		return c.json({ greg: GREG_PROMPT, professional: PROFESSIONAL_PROMPT });
 	});
 
+	app.get("/api/models", async (c) => {
+		const models: Array<{ id: string; name: string; provider: string }> = [];
+		// Anthropic models
+		models.push(
+			{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic" },
+			{ id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: "anthropic" },
+			{ id: "claude-opus-4-20250514", name: "Claude Opus 4", provider: "anthropic" },
+		);
+		// Ollama models
+		if (config.OLLAMA_URL) {
+			try {
+				const res = await fetch(`${config.OLLAMA_URL}/api/tags`);
+				if (res.ok) {
+					const data = await res.json() as { models: Array<{ name: string }> };
+					for (const m of data.models ?? []) {
+						// Skip embedding models
+						if (/embed|bge-|nomic-embed/i.test(m.name)) continue;
+						models.push({ id: m.name, name: m.name, provider: "ollama" });
+					}
+				}
+			} catch {}
+		}
+		return c.json(models);
+	});
+
 	app.get("/api/greeting-gif", async (c) => {
 		if (!config.GIPHY_API_KEY) return c.json({ url: null });
 		try {
 			const queries = ["cat hello", "cat wave", "cat typing", "cat computer", "cat greeting", "cat sup"];
 			const q = encodeURIComponent(queries[Math.floor(Math.random() * queries.length)]);
 			const offset = Math.floor(Math.random() * 20);
-			const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=1&offset=${offset}&rating=g&lang=en`);
-			const data = await res.json() as { data: Array<{ images: { fixed_height: { url: string } } }> };
-			return c.json({ url: data.data?.[0]?.images?.fixed_height?.url ?? null });
+			const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
+			const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
+			const blocked = /lebron|james|lbj/i;
+			const match = data.data?.find((g: { title: string; images: { original: { url: string } } }) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
+			return c.json({ url: match?.images?.original?.url ?? null });
 		} catch {
 			return c.json({ url: null });
 		}

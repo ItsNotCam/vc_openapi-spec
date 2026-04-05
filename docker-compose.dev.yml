@@ -1,0 +1,52 @@
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma_data:/chroma/chroma
+    ports:
+      - "8000:8000"
+
+  mcp-server:
+    image: oven/bun:1-debian
+    working_dir: /app
+    command: sh -c "bun install && bun run --watch packages/mcp-server/main.ts serve --transport http --port 3000"
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      PORT: 3000
+      HOST: 0.0.0.0
+      NODE_ENV: development
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-20250514}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mxbai-embed-large}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+    ports:
+      - "3002:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - specs_data:/app/specs
+    depends_on:
+      - chromadb
+
+  frontend:
+    image: oven/bun:1-debian
+    working_dir: /app/packages/frontend
+    command: sh -c "bun install && bunx vite --port 3000 --host 0.0.0.0"
+    environment:
+      VITE_API_URL: http://mcp-server:3000
+    ports:
+      - "3001:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/packages/frontend/node_modules
+    depends_on:
+      - mcp-server
+
+volumes:
+  chroma_data:
+  specs_data:
