@@ -17,8 +17,8 @@ export default function EpCard({ method, path, api, description, compact, onClic
 			style={{
 				background: C.surface,
 				border: `1px solid ${C.border}`,
-				borderRadius: 6,
-				padding: compact ? "8px 11px" : "11px 14px",
+				borderRadius: 4,
+				padding: compact ? "3px 6px" : "4px 8px",
 				cursor: onClick ? "pointer" : "default",
 				transition: "all 0.1s",
 			}}
@@ -29,18 +29,18 @@ export default function EpCard({ method, path, api, description, compact, onClic
 				(e.currentTarget as HTMLElement).style.borderColor = C.border;
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 5 }}>
 				<span
 					style={{
-						fontSize: 13,
+						fontSize: 10,
 						fontWeight: 600,
-						padding: "1px 7px",
-						borderRadius: 4,
+						padding: "0px 4px",
+						borderRadius: 3,
 						fontFamily: "monospace",
 						background: m.bg,
 						color: m.text,
 						border: `1px solid ${m.border}`,
-						minWidth: compact ? 42 : 46,
+						minWidth: compact ? 30 : 34,
 						textAlign: "center",
 					}}
 				>
@@ -48,7 +48,7 @@ export default function EpCard({ method, path, api, description, compact, onClic
 				</span>
 				<code
 					style={{
-						fontSize: compact ? 14 : 15,
+						fontSize: compact ? 11 : 12,
 						fontFamily: "monospace",
 						color: C.text,
 						overflow: "hidden",
@@ -61,9 +61,9 @@ export default function EpCard({ method, path, api, description, compact, onClic
 				</code>
 				<span
 					style={{
-						fontSize: 13,
-						padding: "1px 7px",
-						borderRadius: 4,
+						fontSize: 10,
+						padding: "0px 4px",
+						borderRadius: 3,
 						background: C.accentDim,
 						color: C.accent,
 						fontWeight: 500,
@@ -75,11 +75,11 @@ export default function EpCard({ method, path, api, description, compact, onClic
 			</div>
 			<p
 				style={{
-					fontSize: compact ? 14 : 15,
+					fontSize: compact ? 10 : 11,
 					color: C.textDim,
-					margin: "4px 0 0",
-					lineHeight: 1.4,
-					paddingLeft: compact ? 50 : 56,
+					margin: "2px 0 0",
+					lineHeight: 1.3,
+					paddingLeft: compact ? 35 : 40,
 					overflow: "hidden",
 					textOverflow: "ellipsis",
 					whiteSpace: "nowrap",

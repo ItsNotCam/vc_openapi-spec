@@ -25,5 +25,7 @@ export const AppConfig = z.object({
 	ANTHROPIC_API_KEY: z.string().optional(),
 	GIPHY_API_KEY: z.string().optional(),
 
+	MAX_TOOL_CALLS_PER_SESSION: z.coerce.number().default(5),
+
 	NODE_ENV: z.string().default("development"),
 });

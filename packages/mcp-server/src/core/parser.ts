@@ -263,6 +263,14 @@ export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
 	const endpoints: Endpoint[] = [];
 	const paths = (spec.paths ?? {}) as Record<string, Record<string, unknown>>;
 
+	// Extract spec-level security schemes and global security
+	const components = (spec.components ?? {}) as Record<string, unknown>;
+	const securitySchemes = (components.securitySchemes ?? spec.securityDefinitions ?? {}) as Endpoint["securitySchemes"];
+	const globalSecurity = spec.security as Record<string, unknown>[] | undefined;
+
+	// Extract rate limit extensions if present at spec level
+	const specRateLimit = extractRateLimit(spec);
+
 	for (const [pathStr, pathItem] of Object.entries(paths)) {
 		if (!pathItem || typeof pathItem !== "object") continue;
 
@@ -276,6 +284,9 @@ export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
 			const opParams = (op.parameters ?? []) as Parameter[];
 			const mergedParams = mergeParameters(pathLevelParams, opParams);
 
+			const opSecurity = (op.security as Record<string, unknown>[] | undefined) ?? globalSecurity;
+			const opRateLimit = extractRateLimit(op) ?? specRateLimit;
+
 			endpoints.push({
 				method: method.toUpperCase(),
 				path: pathStr,
@@ -286,11 +297,31 @@ export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
 				parameters: mergedParams,
 				requestBody: op.requestBody as Endpoint["requestBody"],
 				responses: (op.responses ?? {}) as Endpoint["responses"],
+				security: opSecurity,
+				securitySchemes: securitySchemes,
+				rateLimits: opRateLimit ?? undefined,
 			});
 		}
 	}
 
 	return endpoints;
+}
+
+function extractRateLimit(obj: Record<string, unknown>): { limit?: number; unit?: string } | null {
+	for (const key of Object.keys(obj)) {
+		const lower = key.toLowerCase();
+		if (lower.includes("ratelimit") || lower.includes("rate-limit") || lower.includes("rate_limit") || lower.includes("throttl")) {
+			const val = obj[key];
+			if (typeof val === "number") return { limit: val, unit: "req/min" };
+			if (typeof val === "object" && val !== null) {
+				const r = val as Record<string, unknown>;
+				const limit = (r.limit ?? r.rate ?? r.requests ?? r.max) as number | undefined;
+				const unit = (r.unit ?? r.period ?? r.window ?? r.per) as string | undefined;
+				if (limit) return { limit, unit: unit ?? "req/min" };
+			}
+		}
+	}
+	return null;
 }
 
 // ---------------------------------------------------------------------------

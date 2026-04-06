@@ -87,11 +87,16 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 
 	// ── Embedding text (short, semantic) ──────────────────────────
 	const embedParts: string[] = [`${method} ${path}`];
-	if (endpoint.summary) embedParts.push(endpoint.summary);
+	// Skip summaries that just repeat the method+path (e.g. "GET /devices")
+	const summaryIsRedundant = endpoint.summary &&
+		/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\//i.test(endpoint.summary.trim());
+	if (endpoint.summary && !summaryIsRedundant) embedParts.push(endpoint.summary);
 	if (endpoint.tags.length > 0) embedParts.push(endpoint.tags.join(", "));
 	if (endpoint.description) {
-		const firstSentence = endpoint.description.split(". ")[0].split(".\n")[0];
-		embedParts.push(firstSentence);
+		// Use more description text when summary is missing or redundant
+		const maxSentences = (!endpoint.summary || summaryIsRedundant) ? 3 : 1;
+		const sentences = endpoint.description.split(/\.\s/).slice(0, maxSentences);
+		embedParts.push(sentences.join(". ").trim());
 	}
 	if (params.length > 0) {
 		const paramNames = params
@@ -152,6 +157,10 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 
 	// Pre-build compact medium_text for LLM consumption
 	metadata.medium_text = buildMediumText(endpoint, metadata);
+
+	// Generate warnings for non-obvious endpoint traits
+	const warnings = generateWarnings(endpoint);
+	if (warnings.length > 0) metadata.warnings = warnings.join("|");
 
 	return [docId, embedText, metadata];
 }
@@ -372,6 +381,140 @@ function buildMediumText(endpoint: Endpoint, metadata: Record<string, string>): 
 	}
 
 	return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Warning generation
+// ---------------------------------------------------------------------------
+
+const STANDARD_HEADERS = new Set(["accept", "content-type", "authorization", "user-agent"]);
+const PAGINATION_PARAMS = new Set(["limit", "offset", "cursor", "page", "page_size", "pagesize", "per_page", "perpage", "after", "before"]);
+
+// Fields where the name suggests a non-numeric type but the spec says otherwise
+const COUNTERINTUITIVE_TYPES: [RegExp, string, string][] = [
+	[/risk|threat|severity|priority|level|score|rating/i, "string", "is numeric, not string enum"],
+	[/risk|threat|severity|priority|level|score|rating/i, "integer", "is integer, not string enum"],
+	[/count|total|amount|size|length|quantity/i, "string", "is stored as string, not number"],
+	[/enabled|active|disabled|visible|hidden/i, "string", "is string, not boolean"],
+	[/enabled|active|disabled|visible|hidden/i, "integer", "is integer, not boolean"],
+	[/date|time|timestamp|created|updated|expires/i, "integer", "is epoch integer, not ISO date string"],
+	[/id$/i, "integer", "is integer, not string"],
+	[/port/i, "string", "is string, not integer"],
+];
+
+function generateWarnings(endpoint: Endpoint): string[] {
+	const warnings: string[] = [];
+	const params = endpoint.parameters ?? [];
+	const schemes = endpoint.securitySchemes ?? {};
+	const security = endpoint.security ?? [];
+
+	// ── Auth warnings ─────────────────────────────────────────────
+	// Check securitySchemes for non-Bearer auth
+	const activeSchemeNames = new Set(security.flatMap((s) => Object.keys(s)));
+	for (const [name, scheme] of Object.entries(schemes)) {
+		if (!activeSchemeNames.has(name) && activeSchemeNames.size > 0) continue;
+		if (scheme.type === "apiKey") {
+			warnings.push(`Auth: uses ${scheme.name ?? name} ${scheme.in ?? "header"}, not Bearer token`);
+		} else if (scheme.type === "oauth2") {
+			const flows = scheme.flows ?? {};
+			const flowNames = Object.keys(flows);
+			const tokenUrl = Object.values(flows).find((f) => f.tokenUrl)?.tokenUrl;
+			const detail = tokenUrl ? ` via ${tokenUrl}` : "";
+			warnings.push(`Auth: OAuth 2.0 (${flowNames.join("/")}${detail}), not Bearer API key`);
+		} else if (scheme.type === "http" && scheme.scheme && scheme.scheme !== "bearer") {
+			warnings.push(`Auth: uses HTTP ${scheme.scheme}, not Bearer token`);
+		}
+	}
+
+	// Non-standard auth headers in parameters (fallback for specs without securitySchemes)
+	const headerParams = params.filter((p) => p.in === "header");
+	if (activeSchemeNames.size === 0) {
+		const authLikeHeaders = headerParams.filter((p) => {
+			const name = (p.name ?? "").toLowerCase();
+			return !STANDARD_HEADERS.has(name) && (name.includes("key") || name.includes("token") || name.includes("auth") || name.includes("secret"));
+		});
+		if (authLikeHeaders.length > 0) {
+			warnings.push(`Auth: uses ${authLikeHeaders.map((p) => p.name).join(", ")} header, not Bearer token`);
+		}
+	}
+
+	// ── Pagination warnings ───��───────────────────────────────────
+	const paginationParams = params.filter((p) => PAGINATION_PARAMS.has((p.name ?? "").toLowerCase()));
+	if (paginationParams.length > 0) {
+		const limitParam = paginationParams.find((p) => (p.name ?? "").toLowerCase() === "limit" || (p.name ?? "").toLowerCase() === "page_size" || (p.name ?? "").toLowerCase() === "per_page");
+		const schema = (limitParam?.schema ?? {}) as Record<string, unknown>;
+		const maxVal = schema.maximum as number | undefined;
+		const hasCursor = paginationParams.some((p) => (p.name ?? "").toLowerCase() === "cursor" || (p.name ?? "").toLowerCase() === "after");
+		if (maxVal) {
+			warnings.push(`Max ${maxVal} results per page${hasCursor ? ", use cursor for pagination" : ""}`);
+		} else {
+			warnings.push(`Pagination: uses ${paginationParams.map((p) => p.name).join("/")} parameters`);
+		}
+	}
+
+	// ── Required non-standard headers ─────────────────────────────
+	const requiredHeaders = headerParams.filter((p) => p.required && !STANDARD_HEADERS.has((p.name ?? "").toLowerCase()));
+	if (requiredHeaders.length > 0) {
+		warnings.push(`Required header${requiredHeaders.length > 1 ? "s" : ""}: ${requiredHeaders.map((p) => p.name).join(", ")}`);
+	}
+
+	// ── Rate limits ─────��─────────────────────────────────────────
+	if (endpoint.rateLimits?.limit) {
+		warnings.push(`Rate limit: ${endpoint.rateLimits.limit} ${endpoint.rateLimits.unit ?? "req/min"}`);
+	}
+
+	// ── Counterintuitive field types ───���──────────────────────────
+	const allSchemas = collectFieldSchemas(endpoint);
+	for (const [fieldName, fieldType] of allSchemas) {
+		for (const [pattern, triggerType, message] of COUNTERINTUITIVE_TYPES) {
+			if (pattern.test(fieldName) && fieldType === triggerType) {
+				warnings.push(`${fieldName} ${message}`);
+				break;
+			}
+		}
+	}
+
+	return warnings;
+}
+
+/** Collect [fieldName, type] pairs from request body and response schemas. */
+function collectFieldSchemas(endpoint: Endpoint): [string, string][] {
+	const fields: [string, string][] = [];
+
+	function walkProperties(schema: unknown, depth: number) {
+		if (!schema || typeof schema !== "object" || depth > 4) return;
+		const s = schema as Record<string, unknown>;
+
+		const props = (s.properties ?? {}) as Record<string, Record<string, unknown>>;
+		for (const [name, propSchema] of Object.entries(props)) {
+			if (!propSchema || typeof propSchema !== "object") continue;
+			const ptype = (propSchema.type as string) ?? "";
+			if (ptype) fields.push([name, ptype]);
+			walkProperties(propSchema, depth + 1);
+		}
+
+		// Walk into array items
+		if (s.items && typeof s.items === "object") {
+			walkProperties(s.items, depth + 1);
+		}
+	}
+
+	// Request body schemas
+	const reqContent = endpoint.requestBody?.content ?? {};
+	for (const mediaObj of Object.values(reqContent)) {
+		if (mediaObj?.schema) walkProperties(mediaObj.schema, 0);
+	}
+
+	// Response schemas (2xx only)
+	for (const [status, resp] of Object.entries(endpoint.responses ?? {})) {
+		if (!String(status).startsWith("2")) continue;
+		const content = resp?.content ?? {};
+		for (const mediaObj of Object.values(content)) {
+			if (mediaObj?.schema) walkProperties(mediaObj.schema, 0);
+		}
+	}
+
+	return fields;
 }
 
 function schemaSummary(schema: unknown, depth: number = 0): string {

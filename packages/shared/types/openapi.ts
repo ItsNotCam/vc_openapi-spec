@@ -22,6 +22,14 @@ export interface ResponseObject {
 	}>;
 }
 
+export interface SecurityScheme {
+	type: string;           // "apiKey" | "http" | "oauth2" | "openIdConnect"
+	scheme?: string;        // "bearer", "basic", etc. (for type: "http")
+	in?: string;            // "header" | "query" | "cookie" (for type: "apiKey")
+	name?: string;          // header/query param name (for type: "apiKey")
+	flows?: Record<string, { tokenUrl?: string; authorizationUrl?: string }>;
+}
+
 export interface Endpoint {
 	method: string;
 	path: string;
@@ -32,6 +40,9 @@ export interface Endpoint {
 	parameters: Parameter[];
 	requestBody?: RequestBody;
 	responses: Record<string, ResponseObject>;
+	security?: Record<string, unknown>[];
+	securitySchemes?: Record<string, SecurityScheme>;
+	rateLimits?: { limit?: number; unit?: string };
 }
 
 export interface SchemaDefinition {

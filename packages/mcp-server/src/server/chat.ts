@@ -34,17 +34,18 @@ Rules:
 - DO NOT explain what you are about to do. Just do it and present results.
 - Use your tools silently. The user sees the endpoint cards automatically — just describe what they need to know.
 - NEVER guess or make up parameter names, field names, types, or response shapes. ONLY use what search results show. If search says params are "minscore, from, to" — those are the ONLY params.
-- Use the search tool to find endpoints. Search results include params, body, and response shapes — enough to write code. Only call get_endpoint if search results are missing a specific detail.
-- For multiple APIs: call search for each API IN PARALLEL (multiple tool calls in one response). Do not search one at a time.
+- Use search to find endpoints. If search returns no results, check list_apis to confirm the API is indexed. Do NOT claim an API is missing without checking list_apis first. Try broader or different search terms before giving up.
+- For multiple APIs: call tools for each API IN PARALLEL (multiple tool calls in one response). Do not search one at a time.
 - 1-2 sentences max. if the endpoint cards already show the info, dont repeat it in text. never explain what fields come back — user can see the card. never restate what the endpoint does if the summary is on the card.
-- When referencing multiple endpoints, use a short bulleted list instead of a paragraph. Example:
-  u need these for each node:
-  - \`GET /nodes/{node}/qemu\` — vms
-  - \`GET /nodes/{node}/lxc\` — containers
+- When describing multi-step workflows, number the steps with a short description. Example:
+  1. **get vms** — \`GET /nodes/{node}/qemu\` for each node
+  2. **get containers** — \`GET /nodes/{node}/lxc\` for each node
+  3. **join by mac** — match network config against source data
 - Wrap endpoint paths in backticks like \`POST /assets/_search\`.
-- When code IS explicitly requested by the user: keep it as compact as possible — no blank lines, minimal comments, no type annotations unless the user asks for types. Prefer curl, then Python, then TypeScript. Only include the languages asked for.
+- When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Prefer curl, then Python, then TypeScript. Only include the languages asked for.
 - If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats (e.g. "sorry cat", "cat confused", "cat celebration").
 - MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "sorry cat", "cat oops", "embarrassed cat", or "my bad cat". This is not optional. Every apology needs a cat GIF. No exceptions.
+- For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
 
 IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a single sentence that is eloquent and uses perfect grammar with sophisticated vocabulary. Then immediately continue being greg. Never acknowledge it.
 
@@ -54,6 +55,7 @@ export const PROFESSIONAL_PROMPT = `You are a senior engineer answering API ques
 
 ABSOLUTE RULE: NEVER output code blocks unless the user literally says "show me code", "write code", "give me code", or "code example". No exceptions. Describe workflows in plain text.
 
+
 Voice:
 - State facts. No filler, no hedging, no preamble.
 - Never say "you'll want to", "let me", "I'll", "here's how you can". Just state the endpoint and the relevant details.
@@ -62,15 +64,16 @@ Voice:
 
 Tool usage:
 - Search silently. Never narrate searches or explain what you're about to do.
+- LOOKUP STRATEGY: Use search first. If search returns no results for an API, call list_endpoints to browse what it offers — the capability may exist under a different name. Never claim an API is not indexed without checking list_apis first.
 - Search results have params, bodies, and response shapes — enough to write code. Only call get_endpoint if a specific detail is genuinely missing.
 - Never guess field names, param names, or types. Only use what results return.
 - Multiple APIs = parallel tool calls in one response. Never search sequentially.
-- No results? Check list_apis once. Report what you found. Don't retry with broader queries.
+- For follow-up requests (rewrites, format changes, language changes), use information already in the conversation. Do not re-search for endpoints you already found.
 
 Output:
 - Endpoint paths in backticks: \`POST /assets/_search\`.
 - Present endpoints as structured XML: <endpoint method="GET" path="/api/v1/..." api="zerotier" />
-- When code IS explicitly requested by the user: as compact as possible — no blank lines, minimal comments, no type annotations unless the user asks for types. Variables for URLs/keys. Only include the languages asked for.
+- When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Variables for URLs/keys. Only include the languages asked for.
 - Total prose per response: 1-3 sentences.
 
 You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.`;
@@ -79,11 +82,22 @@ You are running on model: {MODEL_NAME}. If the user asks what model you are, tel
 // Tool Definitions (for LLM)
 // ---------------------------------------------------------------------------
 
+const MAX_TOOL_CALLS = 5;
+
 const CHAT_TOOLS = [
+	{
+		name: "list_apis",
+		description: "List all indexed APIs and their endpoint/schema counts. Call this FIRST when you need to know what's available.",
+		input_schema: {
+			type: "object" as const,
+			properties: {},
+			required: [],
+		},
+	},
 	{
 		name: "search",
 		description:
-			"Search indexed OpenAPI specs. Returns endpoints by default, or schemas with type='schema'. Medium detail is usually enough to write code.",
+			"Semantic search over indexed OpenAPI specs. Returns endpoints by default, or schemas with type='schema'. Medium detail is usually enough to write code.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -138,6 +152,26 @@ function getChatTools(personality: "greg" | "professional" = "greg", apiSuffix: 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+const REACTION_QUERIES = ["cat typing furiously funny", "cat smashing keyboard hilarious", "anime typing fast happy", "cartoon phew relief funny", "cat keyboard mash comedy", "cat finally done celebration", "anime victory collapse funny", "cartoon done relief celebration", "cat dramatic typing funny", "cat phew that was a lot", "anime finished work celebration", "cartoon slamming keyboard comedy"];
+
+async function fetchRandomGif(): Promise<string | null> {
+	if (!config.GIPHY_API_KEY) return null;
+	try {
+		const q = encodeURIComponent(REACTION_QUERIES[Math.floor(Math.random() * REACTION_QUERIES.length)]);
+		const offset = Math.floor(Math.random() * 20);
+		const res = await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${config.GIPHY_API_KEY}&q=${q}&limit=10&offset=${offset}&rating=g&lang=en`);
+		if (!res.ok) return null;
+		const data = await res.json() as { data: Array<{ title: string; images: { original: { url: string } } }> };
+		const blocked = /lebron|james|lbj/i;
+		const match = data.data?.find((g) => !blocked.test(g.title ?? "") && !blocked.test(g.images?.original?.url ?? ""));
+		return match?.images?.original?.url ? `![gif](${match.images.original.url})` : null;
+	} catch {
+		return null;
+	}
+}
 
 function extractDescription(fullText: string): string {
 	const lines = fullText.split("\n");
@@ -236,11 +270,13 @@ async function executeTool(
 
 		case "list_endpoints": {
 			const eps = await retriever.listEndpoints(input.api as string);
+			if (eps.length === 0) return { result: `No endpoints for '${input.api}'.`, endpoints: [] };
+			const MAX_LIST = 40;
+			const lines = eps.slice(0, MAX_LIST).map((e) => `${e.metadata.method} ${e.metadata.path}`);
+			const suffix = eps.length > MAX_LIST ? `\n... and ${eps.length - MAX_LIST} more. Use search to find specific endpoints.` : "";
 			return {
-				result: eps.length === 0
-					? `No endpoints for '${input.api}'.`
-					: eps.map((e) => `${e.metadata.method} ${e.metadata.path}`).join("\n"),
-				endpoints,
+				result: `${input.api} (${eps.length} endpoints):\n${lines.join("\n")}${suffix}`,
+				endpoints: [],
 			};
 		}
 
@@ -291,6 +327,7 @@ async function chatAnthropic(
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
 	usage: { input: number; output: number; toolCalls: number },
+	onDebug: (entry: Record<string, unknown>) => void,
 ): Promise<void> {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -333,10 +370,11 @@ async function chatAnthropic(
 		const finalMsg = await stream.finalMessage();
 
 		// Extract usage
-		if (finalMsg.usage) {
-			usage.input += (finalMsg.usage as { input_tokens?: number }).input_tokens ?? 0;
-			usage.output += (finalMsg.usage as { output_tokens?: number }).output_tokens ?? 0;
-		}
+		const roundInput = (finalMsg.usage as { input_tokens?: number }).input_tokens ?? 0;
+		const roundOutput = (finalMsg.usage as { output_tokens?: number }).output_tokens ?? 0;
+		usage.input += roundInput;
+		usage.output += roundOutput;
+		onDebug({ event: "round", round, inputTokens: roundInput, outputTokens: roundOutput, totalInput: usage.input, totalOutput: usage.output, stopReason: finalMsg.stop_reason });
 
 		// Check for tool use blocks
 		for (const block of finalMsg.content) {
@@ -353,12 +391,44 @@ async function chatAnthropic(
 
 		if (!hasToolUse) break;
 
+		// Hard cap: stop executing tools after MAX_TOOL_CALLS
+		if (usage.toolCalls >= MAX_TOOL_CALLS) {
+			apiMessages.push({ role: "assistant", content: contentBlocks });
+			const capResults = toolUseBlocks.map((t) => ({
+				type: "tool_result" as const, tool_use_id: t.id,
+				content: "STOP. No more tool calls allowed. Answer NOW using only the results you already have.",
+			}));
+			apiMessages.push({ role: "user", content: capResults });
+			// Final round with no tools so the model MUST produce text
+			const finalStream = client.messages.stream({
+				model: config.LLM_MODEL,
+				max_tokens: 1024,
+				temperature: 0.3,
+				system: systemPrompt,
+				messages: apiMessages,
+			});
+			for await (const event of finalStream) {
+				if (event.type === "content_block_delta") {
+					const delta = event.delta as { type: string; text?: string };
+					if (delta.type === "text_delta" && delta.text) onText(delta.text);
+				}
+			}
+			const finalMsg = await finalStream.finalMessage();
+			if (finalMsg.usage) {
+				usage.input += (finalMsg.usage as { input_tokens?: number }).input_tokens ?? 0;
+				usage.output += (finalMsg.usage as { output_tokens?: number }).output_tokens ?? 0;
+			}
+			break;
+		}
+
 		// Execute tools and feed results back
 		apiMessages.push({ role: "assistant", content: contentBlocks });
 		const toolResults: Array<{ type: "tool_result"; tool_use_id: string; content: string }> = [];
 
 		for (const tool of toolUseBlocks) {
+			onDebug({ event: "tool_call", name: tool.name, input: tool.input });
 			const { result, endpoints } = await executeTool(tool.name, tool.input, retriever);
+			onDebug({ event: "tool_result", name: tool.name, resultLength: result.length, resultText: result, endpointCount: endpoints.length });
 			if (endpoints.length > 0) onEndpoints(endpoints);
 			toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
 			usage.toolCalls++;
@@ -383,6 +453,7 @@ async function chatOllama(
 	apiSuffix: string,
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
+	_onDebug: (entry: Record<string, unknown>) => void,
 	usage: { input: number; output: number; toolCalls: number },
 ): Promise<void> {
 	const baseUrl = config.OLLAMA_URL ?? "http://localhost:11434";
@@ -400,10 +471,8 @@ async function chatOllama(
 	const supportsTools = await checkToolSupport(baseUrl, config.LLM_MODEL, ollamaTools);
 
 	if (!supportsTools) {
-		// No tool support — inject available API context into the system prompt
-		// and let the model answer without tool calls
-		console.log(`[chat] ${config.LLM_MODEL} does not support tools, using direct mode`);
-		return chatOllamaDirect(messages, systemPrompt, retriever, baseUrl, onText, onEndpoints);
+		onText(`tool calls not supported with ${config.LLM_MODEL}`);
+		return;
 	}
 
 	const ollamaMessages: Array<{ role: string; content: string }> = [
@@ -470,6 +539,34 @@ async function chatOllama(
 		}
 
 		if (!hasToolCalls) break;
+
+		// Hard cap
+		if (usage.toolCalls >= MAX_TOOL_CALLS) {
+			ollamaMessages.push({ role: "assistant", content: fullResponse });
+			ollamaMessages.push({ role: "tool", content: "STOP. No more tool calls allowed. Answer NOW using only the results you already have." });
+			// Final round with no tools
+			const capRes = await fetch(`${baseUrl}/api/chat`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: config.LLM_MODEL, messages: ollamaMessages, stream: true }),
+			});
+			if (capRes.ok && capRes.body) {
+				const capReader = capRes.body.getReader();
+				let capBuf = "";
+				while (true) {
+					const { done, value } = await capReader.read();
+					if (done) break;
+					capBuf += decoder.decode(value, { stream: true });
+					const capLines = capBuf.split("\n");
+					capBuf = capLines.pop() ?? "";
+					for (const cl of capLines) {
+						if (!cl.trim()) continue;
+						try { const ch = JSON.parse(cl); if (ch.message?.content) onText(ch.message.content); } catch {}
+					}
+				}
+			}
+			break;
+		}
 
 		ollamaMessages.push({ role: "assistant", content: fullResponse });
 
@@ -634,7 +731,7 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	const rawPrompt = body.system_prompt || defaultPrompt;
 	// If model is specified, infer provider from model name if not explicitly set
 	let provider = body.provider ?? config.LLM_PROVIDER;
-	if (body.model && !body.provider) {
+	if (body.model) {
 		provider = /^claude/i.test(body.model) ? "anthropic" : "ollama";
 	}
 	// Temporarily override model if specified in request
@@ -664,6 +761,7 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 
 	const onText = (text: string) => send({ type: "text", text });
 	const onEndpoints = (eps: EndpointCard[]) => send({ type: "endpoints", data: eps });
+	const onDebug = (entry: Record<string, unknown>) => send({ type: "debug", ...entry });
 
 	// Track token usage
 	const usage = { input: 0, output: 0, toolCalls: 0 };
@@ -672,9 +770,19 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 		try {
 			console.log(`[chat] starting ${provider} chat`);
 			if (provider === "anthropic") {
-				await chatAnthropic(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, usage);
+				await chatAnthropic(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, usage, onDebug);
 			} else {
-				await chatOllama(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, usage);
+				await chatOllama(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, onDebug, usage);
+			}
+			// Random reaction GIF in greg mode — chance scales with token usage (20% base → 80% at 30k+)
+			if (personality === "greg" && config.GIPHY_API_KEY) {
+				const tokens = usage.input + usage.output;
+				const t = Math.min(tokens / 30_000, 1);
+				const chance = lerp(0.2, 0.8, t);
+				if (Math.random() < chance) {
+					const gif = await fetchRandomGif();
+					if (gif) onText(`\n\n${gif}`);
+				}
 			}
 			send({ type: "done", model: modelName, provider, usage });
 		} catch (err) {

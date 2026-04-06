@@ -13,6 +13,7 @@ export interface ChatMsg {
 	streaming?: boolean;
 	model?: string;
 	usage?: { input: number; output: number; toolCalls: number };
+	debug?: Record<string, unknown>[];
 }
 
 // ---------------------------------------------------------------------------

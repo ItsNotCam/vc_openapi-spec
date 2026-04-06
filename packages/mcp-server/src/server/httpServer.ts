@@ -62,6 +62,34 @@ async function saveSpecFile(apiName: string, content: string, ext: string): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Auto-ingest on startup
+// ---------------------------------------------------------------------------
+
+async function autoIngestSpecs(retriever: Retriever): Promise<void> {
+	if (!fs.existsSync(SPECS_DIR)) return;
+
+	const indexed = new Set((await retriever.listApis()).map((a) => a.name));
+	const entries = fs.readdirSync(SPECS_DIR).sort();
+
+	for (const filename of entries) {
+		const ext = path.extname(filename);
+		if (![".yaml", ".yml", ".json"].includes(ext)) continue;
+
+		const apiName = path.basename(filename, ext);
+		if (indexed.has(apiName)) continue;
+
+		const filePath = path.join(SPECS_DIR, filename);
+		console.log(`[auto-ingest] ingesting ${filename} as '${apiName}' ...`);
+		try {
+			const summary = await retriever.ingest(filePath, apiName);
+			console.log(`[auto-ingest] ${apiName}: ${summary.endpointsIngested} endpoints, ${summary.schemasIngested} schemas`);
+		} catch (err) {
+			console.error(`[auto-ingest] failed to ingest ${filename}:`, err instanceof Error ? err.message : err);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Auth Middleware
 // ---------------------------------------------------------------------------
 
@@ -141,7 +169,7 @@ export async function runHttpServer(host: string, port: number): Promise<void> {
 			}
 
 			const api = c.req.query("api") || undefined;
-			const n = Math.min(Number(c.req.query("n") ?? 10), 50);
+			const n = Math.min(Number(c.req.query("n") ?? 5), 50);
 
 			const results = await retriever.searchEndpoints(q, api, undefined, undefined, n);
 
@@ -450,7 +478,7 @@ onComplete:function(){
 		try {
 			const body = await c.req.json<{ query: string; api?: string; limit?: number }>();
 			if (!body.query?.trim()) return c.json({ error: "missing query" }, 400);
-			const results = await retriever.searchEndpoints(body.query, body.api, undefined, undefined, body.limit ?? 10);
+			const results = await retriever.searchEndpoints(body.query, body.api, undefined, undefined, body.limit ?? 5);
 			return c.json(results.map(formatSearchResult));
 		} catch (err) {
 			console.error("[api] search/endpoints error:", err);
@@ -462,7 +490,7 @@ onComplete:function(){
 		try {
 			const body = await c.req.json<{ query: string; api?: string; limit?: number }>();
 			if (!body.query?.trim()) return c.json({ error: "missing query" }, 400);
-			const results = await retriever.searchSchemas(body.query, body.api, body.limit ?? 10);
+			const results = await retriever.searchSchemas(body.query, body.api, body.limit ?? 5);
 			return c.json(results.map(formatSearchResult));
 		} catch (err) {
 			console.error("[api] search/schemas error:", err);
@@ -637,6 +665,9 @@ onComplete:function(){
 		port,
 		idleTimeout: 255, // max — embedding large specs can take minutes
 	});
+
+	// Auto-ingest specs on disk that aren't yet indexed (non-blocking)
+	autoIngestSpecs(retriever);
 }
 
 // ---------------------------------------------------------------------------

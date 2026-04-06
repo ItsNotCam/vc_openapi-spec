@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -23,10 +23,33 @@ import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
 import DetailPanel from "../components/DetailPanel";
 
+// Per-million-token pricing for Anthropic models (input, output)
+const ANTHROPIC_PRICING: Record<string, [number, number]> = {
+	"claude-opus-4": [15, 75],
+	"claude-sonnet-4": [3, 15],
+	"claude-haiku-4-5": [0.80, 4],
+	"claude-3-5-sonnet": [3, 15],
+	"claude-3-5-haiku": [0.80, 4],
+	"claude-3-opus": [15, 75],
+};
+
+function estimateCost(model: string | undefined, usage: { input: number; output: number }): string | null {
+	if (!model || !model.startsWith("claude")) return null;
+	const key = Object.keys(ANTHROPIC_PRICING).sort((a, b) => b.length - a.length).find((k) => model.startsWith(k));
+	if (!key) return null;
+	const [inp, out] = ANTHROPIC_PRICING[key];
+	const cost = (usage.input * inp + usage.output * out) / 1_000_000;
+	return cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2);
+}
+
 function cleanText(raw: string): string {
 	const text = raw
 		.replace(/<endpoint[^>]*\/?>/g, "")
 		.replace(/\n{3,}/g, "\n\n")
+		// Break when colon is immediately followed by a capital letter (no space/newline)
+		.replace(/:([A-Z])/g, ":\n\n$1")
+		// Break before labeled sections ("Proxmox workflow:", "Darktrace workflow:") after sentence end
+		.replace(/([.!?)])\s+([A-Z][a-z]+ \w+:)/g, "$1\n\n$2")
 		.trim();
 
 	// Convert single newlines to double (markdown paragraph breaks)
@@ -147,6 +170,33 @@ function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang:
 	);
 }
 
+function StreamingText({ text }: { text: string }) {
+	const cleaned = cleanText(text);
+	if (!cleaned) return <span>...</span>;
+	// Check for an unclosed code block (streaming in progress)
+	const openFences = (cleaned.match(/```/g) || []).length;
+	const hasUnclosedCode = openFences % 2 === 1;
+	if (hasUnclosedCode) {
+		// Show text before the code block + "coding..." spinner
+		const lastFence = cleaned.lastIndexOf("```");
+		const before = cleaned.slice(0, lastFence).trim();
+		return (
+			<>
+				{before && <span style={{ whiteSpace: "pre-wrap" }}>{before}</span>}
+				<div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: C.textDim }}>
+					<span style={{ animation: "spin 1s linear infinite", display: "inline-block", width: 14, height: 14 }}>
+						<svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+							<circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 12" />
+						</svg>
+					</span>
+					<span style={{ fontSize: 14, fontStyle: "italic" }}>coding...</span>
+				</div>
+			</>
+		);
+	}
+	return <span style={{ whiteSpace: "pre-wrap" }}>{cleaned}</span>;
+}
+
 function stableKey(s: string): string {
 	let h = 0;
 	for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
@@ -173,7 +223,19 @@ const mdComponents = (msgKey: number, langMap: Record<string, string>) => ({
 	pre({ children }: { children?: React.ReactNode }) { return <>{children as React.ReactNode}</>; },
 	p({ children }: { children?: React.ReactNode }) { return <p style={{ margin: "10px 0" }}>{children as React.ReactNode}</p>; },
 	ul({ children }: { children?: React.ReactNode }) { return <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ul>; },
-	ol({ children }: { children?: React.ReactNode }) { return <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ol>; },
+	ol({ children, node }: { children?: React.ReactNode; node?: { children?: unknown[] } }) {
+		const liCount = node?.children?.filter((c: unknown) => c && typeof c === "object" && (c as { tagName?: string }).tagName === "li").length ?? 0;
+		if (liCount < 3) return <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children as React.ReactNode}</ol>;
+		// Wrap each li child in a LiDropdown
+		let idx = 0;
+		const wrapped = React.Children.map(children, (child) => {
+			if (child && typeof child === "object" && "type" in (child as React.ReactElement) && (child as React.ReactElement).type === "li") {
+				return <LiDropdown index={idx++}>{(child as React.ReactElement).props.children}</LiDropdown>;
+			}
+			return child;
+		});
+		return <ol style={{ margin: "4px 0", paddingLeft: 0, listStyle: "none" }}>{wrapped}</ol>;
+	},
 	a({ href, children }: { href?: string; children?: React.ReactNode }) { return <a href={String(href)} style={{ color: C.accent }} target="_blank" rel="noopener noreferrer">{children as React.ReactNode}</a>; },
 	img({ src, alt }: { src?: string; alt?: string }) { return <img src={String(src)} alt={String(alt ?? "")} style={{ maxWidth: "100%", maxHeight: 300, borderRadius: 10, marginTop: 6 }} />; },
 	table({ children }: { children?: React.ReactNode }) { return <table style={{ borderCollapse: "collapse", width: "100%", margin: "6px 0", fontSize: 14 }}>{children as React.ReactNode}</table>; },
@@ -181,6 +243,31 @@ const mdComponents = (msgKey: number, langMap: Record<string, string>) => ({
 	th({ children }: { children?: React.ReactNode }) { return <th style={{ textAlign: "left", padding: "4px 8px", color: C.text, fontWeight: 600 }}>{children as React.ReactNode}</th>; },
 	td({ children }: { children?: React.ReactNode }) { return <td style={{ padding: "4px 8px", borderTop: `1px solid ${C.border}`, color: C.textMuted }}>{children as React.ReactNode}</td>; },
 });
+
+function LiDropdown({ children, index }: { children?: React.ReactNode; index: number }) {
+	const [open, setOpen] = useState(false);
+	// Extract first line of text as the summary
+	const text = String(
+		Array.isArray(children)
+			? (typeof children[0] === "string" ? children[0] : children.find((c) => typeof c === "string") ?? "")
+			: typeof children === "string" ? children : ""
+	).split("\n")[0].slice(0, 80) || `Step ${index + 1}`;
+	return (
+		<li style={{ listStyle: "none", marginBottom: 4 }}>
+			<button
+				onClick={() => setOpen(!open)}
+				style={{
+					background: "none", border: "none", cursor: "pointer", padding: "2px 0",
+					display: "flex", alignItems: "center", gap: 6, textAlign: "left",
+				}}
+			>
+				<span style={{ color: C.textDim, fontSize: 12, transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▶</span>
+				<span style={{ color: C.text, fontSize: 15 }}><strong>{index + 1}.</strong> {text}</span>
+			</button>
+			{open && <div style={{ paddingLeft: 22, fontSize: 14, color: C.textMuted }}>{children as React.ReactNode}</div>}
+		</li>
+	);
+}
 
 function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number; langMap: Record<string, string>; defaultOpen: boolean }) {
 	const [open, setOpen] = useState(defaultOpen);
@@ -197,7 +284,7 @@ function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title:
 				<span style={{ color: C.text, fontWeight: 600, fontSize: 20 }}>{title}</span>
 			</button>
 			{open && (
-				<div style={{ paddingLeft: 18, fontSize: 18 }}>
+				<div style={{ paddingLeft: 18, fontSize: 14 }}>
 					<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{body}</ReactMarkdown>
 				</div>
 			)}
@@ -209,17 +296,19 @@ function GregMarkdown({ text, msgKey }: { text: string; msgKey: number }) {
 	const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
 
 	// Split into sections by headings — only use dropdowns if 2+ headings
+	// Replace code block content with spaces (preserving length) so # comments inside don't match as headings
+	const textForScan = text.replace(/```[\s\S]*?```/g, (m) => " ".repeat(m.length));
 	const sectionRegex = /^(#{1,3})\s+(.+)$/gm;
-	const headings = [...text.matchAll(sectionRegex)];
+	const headings = [...textForScan.matchAll(sectionRegex)];
 
 	if (headings.length >= 2) {
 		const sections: { preamble?: string; items: { title: string; body: string }[] } = { items: [] };
-		const firstIdx = text.indexOf(headings[0][0]);
+		const firstIdx = headings[0].index!;
 		if (firstIdx > 0) sections.preamble = text.slice(0, firstIdx).trim();
 
 		for (let i = 0; i < headings.length; i++) {
-			const start = text.indexOf(headings[i][0]) + headings[i][0].length;
-			const end = i + 1 < headings.length ? text.indexOf(headings[i + 1][0]) : text.length;
+			const start = headings[i].index! + headings[i][0].length;
+			const end = i + 1 < headings.length ? headings[i + 1].index! : text.length;
 			sections.items.push({ title: headings[i][2], body: text.slice(start, end).trim() });
 		}
 
@@ -271,12 +360,7 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 				}}
 			>
 				<span style={{ flex: 1, textAlign: "left" }}>
-					{(() => {
-						const sorted = [...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-						const filtered = sorted.length <= 2 ? sorted : sorted.filter((ep) => (ep.score ?? 0) >= 0.75);
-						const count = filtered.length === 0 ? Math.min(2, sorted.length) : filtered.length;
-						return `${count} endpoint${count !== 1 ? "s" : ""} found`;
-					})()}
+					{`${endpoints.length} endpoint${endpoints.length !== 1 ? "s" : ""} found`}
 				</span>
 				<span style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", display: "flex" }}>
 					<svg width={10} height={10} viewBox="0 0 10 10" fill="none">
@@ -286,11 +370,7 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 			</button>
 			{open && (
 				<div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3, maxHeight: 300, overflow: "auto" }}>
-					{(() => {
-					const sorted = [...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-					const filtered = sorted.length <= 2 ? sorted : sorted.filter((ep) => (ep.score ?? 0) >= 0.75);
-					return (filtered.length === 0 ? sorted.slice(0, 2) : filtered);
-				})().map((ep, j) => {
+					{[...endpoints].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map((ep, j) => {
 						const mc = METHOD_COLORS[ep.method] ?? METHOD_COLORS.GET;
 						return (
 							<div
@@ -332,6 +412,68 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 	);
 }
 
+function DebugToolResult({ name, resultText, resultLength, endpointCount }: { name: string; resultText: string; resultLength: number; endpointCount: number }) {
+	const [expanded, setExpanded] = useState(false);
+	const preview = resultText.slice(0, 300);
+	const truncated = resultText.length > 300;
+	return (
+		<div style={{ marginLeft: 8, opacity: 0.7 }}>
+			<span>← {name}: {resultLength.toLocaleString()} chars, {endpointCount} cards</span>
+			<div style={{ marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word", color: C.textDim }}>
+				{expanded ? resultText : preview}{truncated && !expanded && "…"}
+			</div>
+			{truncated && (
+				<button onClick={() => setExpanded(!expanded)} style={{ fontSize: 10, color: C.accent, background: "none", border: "none", cursor: "pointer", marginLeft: 12, padding: 0 }}>
+					{expanded ? "show less" : `show all (${resultLength.toLocaleString()} chars)`}
+				</button>
+			)}
+		</div>
+	);
+}
+
+function DebugDropdown({ entries }: { entries: Record<string, unknown>[] }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div style={{ marginTop: 4 }}>
+			<button
+				onClick={() => setOpen(!open)}
+				style={{
+					fontSize: 11, color: C.textDim, background: "none", border: "none",
+					cursor: "pointer", padding: "2px 0", opacity: 0.6, fontFamily: "monospace",
+				}}
+			>
+				{open ? "▾" : "▸"} debug ({entries.length} events)
+			</button>
+			{open && (
+				<div style={{
+					fontSize: 11, fontFamily: "monospace", color: C.textDim,
+					background: C.codeBg, borderRadius: 6, padding: "8px 10px",
+					marginTop: 2, maxHeight: 300, overflow: "auto", lineHeight: 1.5,
+				}}>
+					{entries.map((e, i) => {
+						const { type: _t, ...rest } = e;
+						const ev = rest.event as string;
+						if (ev === "round") {
+							return <div key={i} style={{ color: C.accent, fontWeight: 600, marginTop: i > 0 ? 6 : 0 }}>
+								round {rest.round as number} — in:{(rest.inputTokens as number).toLocaleString()} out:{(rest.outputTokens as number).toLocaleString()} (total: {(rest.totalInput as number + (rest.totalOutput as number)).toLocaleString()}) stop:{rest.stopReason as string}
+							</div>;
+						}
+						if (ev === "tool_call") {
+							return <div key={i} style={{ marginLeft: 8 }}>
+								→ <span style={{ color: C.green }}>{rest.name as string}</span>({JSON.stringify(rest.input)})
+							</div>;
+						}
+						if (ev === "tool_result") {
+							return <DebugToolResult key={i} name={rest.name as string} resultText={rest.resultText as string} resultLength={rest.resultLength as number} endpointCount={rest.endpointCount as number} />;
+						}
+						return <div key={i}>{JSON.stringify(rest)}</div>;
+					})}
+				</div>
+			)}
+		</div>
+	);
+}
+
 const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 	msg: ChatMsg;
 	i: number;
@@ -352,7 +494,10 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 						)}
 						{msg.usage && !msg.streaming && (
 							<span style={{ fontSize: 12, color: C.textDim, fontFamily: "monospace", marginLeft: "auto" }}>
-								{(msg.usage.input + msg.usage.output).toLocaleString()} tokens{msg.usage.toolCalls > 0 ? ` / ${msg.usage.toolCalls} tool call${msg.usage.toolCalls === 1 ? "" : "s"}` : ""}
+								{(msg.usage.input + msg.usage.output).toLocaleString()} tokens{msg.usage.toolCalls > 0 ? ` / ${msg.usage.toolCalls} tool call${msg.usage.toolCalls === 1 ? "" : "s"}` : ""}{(() => {
+									const cost = estimateCost(msg.model, msg.usage);
+									return cost !== null ? ` / $${cost}` : "";
+								})()}
 							</span>
 						)}
 					</div>
@@ -361,7 +506,7 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 					style={{
 						padding: "14px 20px",
 						borderRadius: 10,
-						fontSize: 22,
+						fontSize: 14,
 						lineHeight: 1.6,
 						background: msg.role === "user" ? C.userBg : C.gregBg,
 						border: `1px solid ${msg.role === "user" ? C.borderAccent : C.border}`,
@@ -371,13 +516,16 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint }: {
 					{msg.role === "user" ? (
 						msg.text
 					) : msg.streaming ? (
-						<span style={{ whiteSpace: "pre-wrap" }}>{cleanText(msg.text) || "..."}</span>
+						<StreamingText text={msg.text} />
 					) : (
 						<GregMarkdown text={cleanText(msg.text)} msgKey={i} />
 					)}
 				</div>
 				{msg.endpoints && msg.endpoints.length > 0 && (
 					<EndpointDropdown endpoints={msg.endpoints} onSelect={onSelectEndpoint} />
+				)}
+				{msg.debug && msg.debug.length > 0 && !msg.streaming && (
+					<DebugDropdown entries={msg.debug} />
 				)}
 			</div>
 		</div>
@@ -484,8 +632,9 @@ export default function GregPage() {
 
 		let accumulated = "";
 		let doneModel: string | undefined;
-		let doneUsage: { input: number; output: number } | undefined;
+		let doneUsage: { input: number; output: number; toolCalls: number } | undefined;
 		const endpointMap = new Map<string, EndpointCard>();
+		const debugLog: Record<string, unknown>[] = [];
 
 		try {
 			const customPrompt = gregMode ? customGregPrompt : customProPrompt;
@@ -516,9 +665,12 @@ export default function GregPage() {
 						accumulated += `\n[error: ${event.error}]`;
 						updateLastAssistant((m) => ({ ...m, text: accumulated }));
 						break;
+					case "debug":
+						debugLog.push(event);
+						break;
 					case "done":
 						doneModel = event.model;
-						doneUsage = event.usage;
+						doneUsage = event.usage ? { ...event.usage, toolCalls: (event.usage as { toolCalls?: number }).toolCalls ?? 0 } : undefined;
 						break;
 				}
 			}
@@ -535,6 +687,7 @@ export default function GregPage() {
 			endpoints: dedupedEndpoints.length > 0 ? dedupedEndpoints : undefined,
 			model: doneModel,
 			usage: doneUsage,
+			debug: debugLog.length > 0 ? debugLog : undefined,
 		}));
 		saveChat();
 		setChatLoading(false);
@@ -812,7 +965,7 @@ export default function GregPage() {
 					)}
 
 					{/* Input */}
-					<div style={{ display: "flex", gap: 12, marginTop: 24, flexShrink: 0 }}>
+					<div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
 						<input
 							type="text"
 							placeholder={gregMode ? "talk to greg..." : "Search API documentation..."}
@@ -821,12 +974,12 @@ export default function GregPage() {
 							onKeyDown={handleKeyDown}
 							style={{
 								flex: 1,
-								height: 64,
-								padding: "0 20px",
+								height: 40,
+								padding: "0 14px",
 								background: C.surface,
 								border: `1px solid ${C.border}`,
-								borderRadius: 10,
-								fontSize: 22,
+								borderRadius: 8,
+								fontSize: 14,
 								color: C.text,
 								outline: "none",
 							}}
@@ -837,37 +990,37 @@ export default function GregPage() {
 							<button
 								onClick={() => { abortRef.current?.abort(); abortRef.current = null; setChatLoading(false); updateLastAssistant((m) => ({ ...m, streaming: false })); saveChat(); }}
 								style={{
-									width: 64,
-									height: 64,
+									width: 40,
+									height: 40,
 									display: "flex",
 									alignItems: "center",
 									justifyContent: "center",
 									background: "rgba(248,113,113,0.1)",
 									border: "none",
-									borderRadius: 10,
+									borderRadius: 8,
 									cursor: "pointer",
 									color: "#F87171",
 								}}
 							>
-								<svg width={22} height={22} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
+								<svg width={16} height={16} viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>
 							</button>
 						) : (
 							<button
 								onClick={handleSend}
 								style={{
-									width: 64,
-									height: 64,
+									width: 40,
+									height: 40,
 									display: "flex",
 									alignItems: "center",
 									justifyContent: "center",
 									background: C.accentMuted,
 									border: "none",
-									borderRadius: 10,
+									borderRadius: 8,
 									cursor: "pointer",
 									color: C.accent,
 								}}
 							>
-								{Ic.send(22)}
+								{Ic.send(16)}
 							</button>
 						)}
 					</div>
@@ -875,7 +1028,7 @@ export default function GregPage() {
 
 				{/* Detail panel */}
 				{detailItem && (
-					<div style={{ width: 550, flexShrink: 0 }}>
+					<div style={{ width: 275, flexShrink: 0 }}>
 						<DetailPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
 					</div>
 				)}

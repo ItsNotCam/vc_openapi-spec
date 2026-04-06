@@ -90,10 +90,11 @@ export default class Retriever {
 		method?: string,
 		tag?: string,
 		n: number = 2,
+		maxDistance: number = MAX_DISTANCE,
 	): Promise<QueryResult[]> {
 		const where = buildWhere({ type: "endpoint", api, method });
 		let results = await this.#store.query(query, n * 3, where ?? undefined);
-		results = results.filter((r) => (r.distance ?? 1) <= MAX_DISTANCE);
+		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		if (tag) {
 			const tagLower = tag.toLowerCase();
 			results = results.filter(
@@ -107,10 +108,11 @@ export default class Retriever {
 		query: string,
 		api?: string,
 		n: number = 2,
+		maxDistance: number = MAX_DISTANCE,
 	): Promise<QueryResult[]> {
 		const where = buildWhere({ type: "schema", api });
 		let results = await this.#store.query(query, n * 3, where ?? undefined);
-		results = results.filter((r) => (r.distance ?? 1) <= MAX_DISTANCE);
+		results = results.filter((r) => (r.distance ?? 1) <= maxDistance);
 		return results.slice(0, n);
 	}
 
