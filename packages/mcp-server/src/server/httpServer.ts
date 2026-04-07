@@ -8,7 +8,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import config from "../core/config";
 import { createMcpServer, WRITE_TOOLS } from "./mcpServer";
 import Retriever from "../core/retriever";
-import { handleChat, GREG_PROMPT, PROFESSIONAL_PROMPT } from "./chat";
+import { handleChat, GREG_PROMPT, VERBOSE_PROMPT, CURT_PROMPT } from "./chat";
 
 const SPECS_DIR = process.env.SPECS_DIR ?? path.resolve(import.meta.dir, "..", "..", "..", "..", "specs");
 const SIZE_WARN_BYTES = 10 * 1024 * 1024;
@@ -81,8 +81,16 @@ async function autoIngestSpecs(retriever: Retriever): Promise<void> {
 		const filePath = path.join(SPECS_DIR, filename);
 		console.log(`[auto-ingest] ingesting ${filename} as '${apiName}' ...`);
 		try {
-			const summary = await retriever.ingest(filePath, apiName);
-			console.log(`[auto-ingest] ${apiName}: ${summary.endpointsIngested} endpoints, ${summary.schemasIngested} schemas`);
+			const summary = await retriever.ingest(filePath, apiName, (e) => {
+				if (e.phase === "embedding" || e.phase === "storing") {
+					if (e.done === e.total || (e.done ?? 0) % 500 === 0) {
+						console.log(`[auto-ingest] ${apiName}: ${e.phase} ${e.done}/${e.total}`);
+					}
+				} else {
+					console.log(`[auto-ingest] ${apiName}: ${e.message}`);
+				}
+			}, { skipDelete: true });
+			console.log(`[auto-ingest] ${apiName}: done — ${summary.endpointsIngested} endpoints, ${summary.schemasIngested} schemas`);
 		} catch (err) {
 			console.error(`[auto-ingest] failed to ingest ${filename}:`, err instanceof Error ? err.message : err);
 		}
@@ -418,13 +426,11 @@ body{margin:0;background:#FFFFFF;color:#18181B}
 </head><body><div id="swagger-ui"></div>
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
 <script>
-SwaggerUIBundle({url:"${specUrl}",dom_id:"#swagger-ui",deepLinking:true,filter:true,presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout",
-onComplete:function(){
-  var p=new URLSearchParams(location.search);
-  var method=p.get("method");
-  var epath=p.get("path");
+function scrollToEndpoint(method,epath){
   if(!method||!epath)return;
   var target=method.toLowerCase();
+  // Clear any previous highlight
+  document.querySelectorAll(".opblock").forEach(function(b){b.style.outline="";});
   // First expand all collapsed tag sections so operations are in the DOM
   document.querySelectorAll(".opblock-tag-section").forEach(function(sec){
     if(!sec.querySelector(".opblock")||sec.querySelector(".opblock").offsetParent===null){
@@ -457,6 +463,16 @@ onComplete:function(){
       }
     }
   },200);
+}
+window.addEventListener("message",function(ev){
+  if(ev.data&&ev.data.type==="scrollToEndpoint"){
+    scrollToEndpoint(ev.data.method,ev.data.path);
+  }
+});
+SwaggerUIBundle({url:"${specUrl}",dom_id:"#swagger-ui",deepLinking:true,filter:true,presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout",
+onComplete:function(){
+  var p=new URLSearchParams(location.search);
+  scrollToEndpoint(p.get("method"),p.get("path"));
 }});
 </script>
 </body></html>`;
@@ -516,6 +532,7 @@ onComplete:function(){
 	app.get("/api/apis", async (c) => {
 		try {
 			const apis = await retriever.listApis();
+			c.header("Cache-Control", "public, max-age=86400");
 			return c.json(apis);
 		} catch (err) {
 			console.error("[api] list apis error:", err);
@@ -536,16 +553,16 @@ onComplete:function(){
 	});
 
 	app.get("/api/prompts", (c) => {
-		return c.json({ greg: GREG_PROMPT, professional: PROFESSIONAL_PROMPT });
+		return c.json({ greg: GREG_PROMPT, verbose: VERBOSE_PROMPT, curt: CURT_PROMPT });
 	});
 
 	app.get("/api/models", async (c) => {
 		const models: Array<{ id: string; name: string; provider: string }> = [];
 		// Anthropic models
 		models.push(
-			{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic" },
-			{ id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: "anthropic" },
-			{ id: "claude-opus-4-20250514", name: "Claude Opus 4", provider: "anthropic" },
+			{ id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5 (fastest)", provider: "anthropic" },
+			{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4 (balanced)", provider: "anthropic" },
+			{ id: "claude-opus-4-20250514", name: "Claude Opus 4 (overkill)", provider: "anthropic" },
 		);
 		// Ollama models
 		if (config.OLLAMA_URL) {
@@ -676,9 +693,8 @@ onComplete:function(){
 	});
 
 	// ── MCP HTTP transport ────────────────────────────────────────
-	const mcpServer = createMcpServer();
-
 	app.all("/openapi", async (c) => {
+		const mcpServer = createMcpServer();
 		const transport = new WebStandardStreamableHTTPServerTransport({
 			sessionIdGenerator: undefined,
 		});

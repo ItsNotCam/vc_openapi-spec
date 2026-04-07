@@ -300,6 +300,7 @@ export function extractEndpoints(spec: Record<string, unknown>): Endpoint[] {
 				security: opSecurity,
 				securitySchemes: securitySchemes,
 				rateLimits: opRateLimit ?? undefined,
+				deprecated: (op.deprecated as boolean) ?? false,
 			});
 		}
 	}

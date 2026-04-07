@@ -24,22 +24,18 @@ class RemoteOllamaEmbeddingFunction implements IEmbeddingFunction {
 	}
 
 	async generate(texts: string[]): Promise<number[][]> {
-		const embeddings: number[][] = [];
-		for (const text of texts) {
-			const res = await fetch(`${this.#url}/api/embed`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ model: this.#model, input: text }),
-				signal: AbortSignal.timeout(120_000), // 2 min per request
-			});
-			if (!res.ok) {
-				const body = await res.text().catch(() => "");
-				throw new Error(`Ollama embed failed: ${res.status} model=${this.#model} url=${this.#url} — ${body}`);
-			}
-			const data = await res.json() as { embeddings: number[][] };
-			embeddings.push(data.embeddings[0]);
+		const res = await fetch(`${this.#url}/api/embed`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: this.#model, input: texts }),
+			signal: AbortSignal.timeout(300_000), // 5 min for large batches
+		});
+		if (!res.ok) {
+			const body = await res.text().catch(() => "");
+			throw new Error(`Ollama embed failed: ${res.status} model=${this.#model} url=${this.#url} — ${body}`);
 		}
-		return embeddings;
+		const data = await res.json() as { embeddings: number[][] };
+		return data.embeddings;
 	}
 }
 
@@ -83,8 +79,9 @@ export default class SpecStore {
 	#embeddingFunction: IEmbeddingFunction | undefined;
 	#collectionName: string;
 
-	static readonly BATCH_SIZE = 250;   // smaller batches avoid ChromaDB timeouts on large specs
-	static readonly EMBED_BATCH = 50;   // embed 50 texts at a time (up from 10)
+	static readonly BATCH_SIZE = 100;   // upsert batch when using local pre-computed embeddings
+	static readonly EMBED_BATCH = 100;  // embed 100 texts at a time (local embedding function)
+	static readonly SERVER_EMBED_BATCH = 25; // smaller batches when ChromaDB server embeds (blocking per batch)
 
 	constructor() {
 		this.#client = buildClient();
@@ -131,8 +128,9 @@ export default class SpecStore {
 
 		onProgress?.(0, ids.length, "storing");
 		const collection = await this.#getCollection();
-		for (let i = 0; i < ids.length; i += SpecStore.BATCH_SIZE) {
-			const end = Math.min(i + SpecStore.BATCH_SIZE, ids.length);
+		const batchSize = this.#embeddingFunction ? SpecStore.BATCH_SIZE : SpecStore.SERVER_EMBED_BATCH;
+		for (let i = 0; i < ids.length; i += batchSize) {
+			const end = Math.min(i + batchSize, ids.length);
 			const upsertParams: Record<string, unknown> = {
 				ids: ids.slice(i, end),
 				documents: texts.slice(i, end),
@@ -150,11 +148,7 @@ export default class SpecStore {
 
 	async deleteApi(apiName: string): Promise<void> {
 		const collection = await this.#getCollection();
-		const results = await collection.get({ where: { api: apiName } });
-		const ids = results.ids ?? [];
-		for (let i = 0; i < ids.length; i += SpecStore.BATCH_SIZE) {
-			await collection.delete({ ids: ids.slice(i, i + SpecStore.BATCH_SIZE) });
-		}
+		await collection.delete({ where: { api: apiName } });
 	}
 
 	async getAll(apiName: string): Promise<DocumentResult[]> {

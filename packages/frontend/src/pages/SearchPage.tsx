@@ -6,6 +6,7 @@ import type { SearchResult } from "../lib/api";
 import { useStore } from "../store/store";
 import ScoreBar from "../components/ScoreBar";
 import DetailPanel from "../components/DetailPanel";
+import GroupedApiSelect from "../components/GroupedApiSelect";
 
 export default function SearchPage() {
 	const apis = useStore((s) => s.apis);
@@ -54,6 +55,21 @@ export default function SearchPage() {
 		<div style={{ padding: "14px 16px", height: "calc(100% - 56px)", display: "flex", flexDirection: "column" }}>
 			{/* Search bar + filter */}
 			<div style={{ display: "flex", gap: 8, marginBottom: 11, flexShrink: 0 }}>
+				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none", zIndex: 1 }}>
+						{Ic.server()}
+					</div>
+					<GroupedApiSelect
+						apis={apis}
+						value={apiFilter}
+						onChange={setApiFilter}
+						allLabel="All APIs"
+						height={44}
+						fontSize={15}
+						minWidth={140}
+						withIcon
+					/>
+				</div>
 				<div style={{ flex: 1, position: "relative" }}>
 					<div style={{ position: "absolute", left: 13, top: 13, color: C.textDim, display: "flex" }}>
 						{Ic.search()}
@@ -79,32 +95,6 @@ export default function SearchPage() {
 						onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "rgba(129,140,248,0.4)")}
 						onBlur={(e) => ((e.target as HTMLElement).style.borderColor = C.border)}
 					/>
-				</div>
-				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none" }}>
-						{Ic.server()}
-					</div>
-					<select
-						value={apiFilter}
-						onChange={(e) => setApiFilter(e.target.value)}
-						style={{
-							height: 44,
-							padding: "0 11px 0 30px",
-							background: C.surface,
-							border: `1px solid ${C.border}`,
-							borderRadius: 6,
-							fontSize: 15,
-							color: C.textMuted,
-							minWidth: 140,
-						}}
-					>
-						<option value="all">All APIs</option>
-						{apis.map((a) => (
-							<option key={a.name} value={a.name}>
-								{a.name}
-							</option>
-						))}
-					</select>
 				</div>
 			</div>
 

@@ -40,13 +40,15 @@ export interface EndpointCard {
 }
 
 export interface ChatSSEEvent {
-	type: "text" | "endpoints" | "done" | "error";
+	type: "text" | "endpoints" | "done" | "error" | "verification_text" | "verification_done" | "debug";
 	text?: string;
 	data?: EndpointCard[];
 	error?: string;
 	model?: string;
 	provider?: string;
+	event?: string;
 	usage?: { input: number; output: number };
+	verificationUsage?: { input: number; output: number };
 }
 
 export async function searchEndpoints(query: string, api?: string, limit = 10): Promise<SearchResult[]> {
@@ -77,8 +79,8 @@ export async function getEndpoint(method: string, path: string, api?: string): P
 	return res.json();
 }
 
-export async function listApis(): Promise<ApiInfo[]> {
-	const res = await fetch("/api/apis");
+export async function listApis(force = false): Promise<ApiInfo[]> {
+	const res = await fetch("/api/apis", force ? { cache: "reload" } : undefined);
 	if (!res.ok) throw new Error(`List APIs failed: ${res.status}`);
 	return res.json();
 }
@@ -129,14 +131,15 @@ export async function generateTitle(prompt: string): Promise<string> {
 
 export async function* streamChat(
 	messages: ChatMessage[],
-	personality: "greg" | "professional",
-	opts?: { systemPrompt?: string; model?: string; provider?: string },
+	personality: "greg" | "verbose" | "curt",
+	opts?: { systemPrompt?: string; model?: string; provider?: string; doubleCheck?: boolean },
 	signal?: AbortSignal,
 ): AsyncGenerator<ChatSSEEvent> {
 	const body: Record<string, unknown> = { messages, personality };
 	if (opts?.systemPrompt) body.system_prompt = opts.systemPrompt;
 	if (opts?.model) body.model = opts.model;
 	if (opts?.provider) body.provider = opts.provider;
+	if (opts?.doubleCheck) body.double_check = true;
 
 	const res = await fetch("/api/chat", {
 		method: "POST",

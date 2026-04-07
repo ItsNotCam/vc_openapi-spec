@@ -93,13 +93,13 @@ export default function EpCard({ method, path, api, description, warnings, compa
 				<div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4, paddingLeft: 40 }}>
 					{warningList.map((w, i) => (
 						<span key={i} style={{
-							fontSize: 9,
-							padding: "1px 5px",
-							borderRadius: 3,
-							background: "rgba(251,191,36,0.08)",
-							color: "#FBBF24",
-							border: "1px solid rgba(251,191,36,0.2)",
-							lineHeight: 1.4,
+							fontSize: 12,
+							padding: "3px 8px",
+							borderRadius: 4,
+							background: "rgba(251,191,36,0.15)",
+							color: "#FCD34D",
+							border: "1px solid rgba(251,191,36,0.35)",
+							lineHeight: 1.5,
 						}}>
 							⚠ {w}
 						</span>

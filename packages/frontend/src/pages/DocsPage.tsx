@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { C, METHOD_COLORS } from "../lib/constants";
 import { Ic } from "../lib/icons";
 import { useStore } from "../store/store";
+import GroupedApiSelect from "../components/GroupedApiSelect";
 
 export default function DocsPage() {
 	const apis = useStore((s) => s.apis);
@@ -41,29 +42,19 @@ export default function DocsPage() {
 			{/* Header */}
 			<div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 11, flexShrink: 0 }}>
 				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none" }}>
+					<div style={{ position: "absolute", left: 10, color: C.textDim, display: "flex", pointerEvents: "none", zIndex: 1 }}>
 						{Ic.server()}
 					</div>
-					<select
+					<GroupedApiSelect
+						apis={apis}
 						value={selectedApi}
-						onChange={(e) => setDocsApi(e.target.value)}
-						style={{
-							height: 42,
-							padding: "0 11px 0 30px",
-							background: C.surface,
-							border: `1px solid ${C.border}`,
-							borderRadius: 6,
-							fontSize: 16,
-							color: C.text,
-							minWidth: 196,
-						}}
-					>
-						{apis.map((a) => (
-							<option key={a.name} value={a.name}>
-								{a.name}
-							</option>
-						))}
-					</select>
+						onChange={setDocsApi}
+						height={42}
+						fontSize={16}
+						minWidth={196}
+						color={C.text}
+						withIcon
+					/>
 				</div>
 				{apiInfo && (
 					<span style={{ fontSize: 15, color: C.textDim }}>{apiInfo.endpoints} endpoints</span>

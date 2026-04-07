@@ -29,6 +29,7 @@ export default class Retriever {
 		source: string,
 		apiName: string,
 		onProgress?: (event: ProgressEvent) => void,
+		opts?: { skipDelete?: boolean },
 	): Promise<IngestSummary> {
 		onProgress?.({ phase: "parsing", message: "Loading spec..." });
 		const spec = await loadSpec(source);
@@ -40,8 +41,10 @@ export default class Retriever {
 		const schemaDocs = schemas.map((s) => schemaToDocument(s, apiName));
 		const allDocs = [...endpointDocs, ...schemaDocs];
 
-		onProgress?.({ phase: "deleting", message: "Removing old data..." });
-		await this.#store.deleteApi(apiName);
+		if (!opts?.skipDelete) {
+			onProgress?.({ phase: "deleting", message: "Removing old data..." });
+			await this.#store.deleteApi(apiName);
+		}
 
 		await this.#store.upsert(allDocs, (done, total, storePhase) => {
 			onProgress?.({ phase: storePhase, message: `${storePhase === "embedding" ? "Embedding" : "Storing"} ${done}/${total}`, done, total });
@@ -102,6 +105,7 @@ export default class Retriever {
 			);
 		}
 		results = applyHybridBoost(query, results);
+		results = penalizeUnstable(results);
 		results = deduplicateByPathPrefix(results);
 		return results.slice(0, n);
 	}
@@ -190,6 +194,24 @@ function applyHybridBoost(query: string, results: QueryResult[]): QueryResult[] 
 	});
 
 	return boosted.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
+}
+
+// Penalize deprecated/unstable/beta endpoints so stable equivalents rank higher.
+const UNSTABLE_PATH_RE = /\/(unstable|beta|experimental|preview|alpha)\//i;
+const UNSTABLE_TAG_RE = /\b(unstable|beta|experimental|preview|alpha|deprecated)\b/i;
+const UNSTABLE_PENALTY = 0.15;
+
+function penalizeUnstable(results: QueryResult[]): QueryResult[] {
+	return results
+		.map((r) => {
+			const isUnstable =
+				r.metadata.deprecated === "true" ||
+				UNSTABLE_PATH_RE.test(r.metadata.path ?? "") ||
+				UNSTABLE_TAG_RE.test(r.metadata.tags ?? "");
+			if (!isUnstable) return r;
+			return { ...r, distance: (r.distance ?? 0) + UNSTABLE_PENALTY };
+		})
+		.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
 }
 
 // Deduplicate results to one entry per path prefix, keeping the best score.

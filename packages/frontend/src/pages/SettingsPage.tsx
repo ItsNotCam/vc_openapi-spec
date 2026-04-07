@@ -74,8 +74,10 @@ export default function SettingsPage() {
 	const apis = useStore((s) => s.apis);
 	const setApis = useStore((s) => s.setApis);
 	const customGregPrompt = useStore((s) => s.customGregPrompt);
+	const customExplainerPrompt = useStore((s) => s.customExplainerPrompt);
 	const customProPrompt = useStore((s) => s.customProPrompt);
 	const setCustomGregPrompt = useStore((s) => s.setCustomGregPrompt);
+	const setCustomExplainerPrompt = useStore((s) => s.setCustomExplainerPrompt);
 	const setCustomProPrompt = useStore((s) => s.setCustomProPrompt);
 	const ingestJobs = useStore((s) => s.ingestJobs);
 	const addIngestJob = useStore((s) => s.addIngestJob);
@@ -89,8 +91,8 @@ export default function SettingsPage() {
 	const [pasteContent, setPasteContent] = useState("");
 	const [pasteFormat, setPasteFormat] = useState<"yaml" | "json">("yaml");
 	const fileRef = useRef<HTMLInputElement>(null);
-	const [promptTab, setPromptTab] = useState<"greg" | "professional">("greg");
-	const [defaultPrompts, setDefaultPrompts] = useState<{ greg: string; professional: string }>({ greg: "", professional: "" });
+	const [promptTab, setPromptTab] = useState<"greg" | "verbose" | "curt">("greg");
+	const [defaultPrompts, setDefaultPrompts] = useState<{ greg: string; explainer: string; professional: string }>({ greg: "", explainer: "", professional: "" });
 
 	useEffect(() => {
 		fetch("/api/prompts").then((r) => r.json()).then(setDefaultPrompts).catch(() => {});
@@ -98,7 +100,7 @@ export default function SettingsPage() {
 
 	const refreshApis = async () => {
 		try {
-			const a = await listApis();
+			const a = await listApis(true);
 			setApis(a);
 		} catch {}
 	};
@@ -186,7 +188,7 @@ export default function SettingsPage() {
 				<div style={{ marginBottom: 24 }}>
 					<div style={sectionHeader}>System Prompt</div>
 					<div style={{ display: "flex", gap: 3, marginBottom: 11 }}>
-						{(["greg", "professional"] as const).map((t) => (
+						{(["greg", "curt", "verbose"] as const).map((t) => (
 							<button
 								key={t}
 								onClick={() => setPromptTab(t)}
@@ -201,14 +203,15 @@ export default function SettingsPage() {
 									color: promptTab === t ? C.accent : C.textDim,
 								}}
 							>
-								{t === "greg" ? "greg mode" : "professional"}
+								{t === "greg" ? "greg mode" : t}
 							</button>
 						))}
 					</div>
 					<textarea
-						value={promptTab === "greg" ? (customGregPrompt || defaultPrompts.greg) : (customProPrompt || defaultPrompts.professional)}
+						value={promptTab === "greg" ? (customGregPrompt || defaultPrompts.greg) : promptTab === "verbose" ? (customExplainerPrompt || defaultPrompts.explainer) : (customProPrompt || defaultPrompts.professional)}
 						onChange={(e) => {
 							if (promptTab === "greg") setCustomGregPrompt(e.target.value);
+							else if (promptTab === "verbose") setCustomExplainerPrompt(e.target.value);
 							else setCustomProPrompt(e.target.value);
 						}}
 						style={{
@@ -229,14 +232,15 @@ export default function SettingsPage() {
 					/>
 					<div style={{ display: "flex", gap: 8, marginTop: 6 }}>
 						<span style={{ fontSize: 14, color: C.textDim, flex: 1 }}>
-							{(promptTab === "greg" ? customGregPrompt : customProPrompt)
+							{(promptTab === "greg" ? customGregPrompt : promptTab === "verbose" ? customExplainerPrompt : customProPrompt)
 								? "Using custom prompt"
 								: "Using default prompt"}
 						</span>
-						{(promptTab === "greg" ? customGregPrompt : customProPrompt) && (
+						{(promptTab === "greg" ? customGregPrompt : promptTab === "verbose" ? customExplainerPrompt : customProPrompt) && (
 							<button
 								onClick={() => {
 									if (promptTab === "greg") setCustomGregPrompt("");
+									else if (promptTab === "verbose") setCustomExplainerPrompt("");
 									else setCustomProPrompt("");
 								}}
 								style={{
@@ -307,6 +311,7 @@ export default function SettingsPage() {
 								value={url}
 								onChange={(e) => setUrl(e.target.value)}
 								onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+								autoComplete="off"
 								style={inputStyle}
 							/>
 						</div>

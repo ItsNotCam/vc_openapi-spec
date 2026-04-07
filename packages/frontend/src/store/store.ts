@@ -12,7 +12,11 @@ export interface ChatMsg {
 	endpoints?: EndpointCard[];
 	streaming?: boolean;
 	model?: string;
+	personality?: "greg" | "verbose" | "curt";
 	usage?: { input: number; output: number; toolCalls: number };
+	verificationUsage?: { input: number; output: number };
+	verificationText?: string;
+	verificationStreaming?: boolean;
 	debug?: Record<string, unknown>[];
 }
 
@@ -74,14 +78,14 @@ interface AppState {
 
 	// Chat
 	chatMessages: ChatMsg[];
-	gregMode: boolean;
+	personality: "greg" | "verbose" | "curt";
 	chatLoading: boolean;
 	selectedModel: string;
 	selectedProvider: string;
 	setChatMessages: (msgs: ChatMsg[]) => void;
 	addChatMessage: (msg: ChatMsg) => void;
 	updateLastAssistant: (updater: (msg: ChatMsg) => ChatMsg) => void;
-	setGregMode: (v: boolean) => void;
+	setPersonality: (v: "greg" | "verbose" | "curt") => void;
 	setChatLoading: (v: boolean) => void;
 	setModel: (model: string, provider: string) => void;
 	clearChat: () => void;
@@ -94,10 +98,16 @@ interface AppState {
 	deleteChat: (id: string) => void;
 	newChat: () => void;
 
+	// Double check (verification pass)
+	doubleCheck: boolean;
+	setDoubleCheck: (v: boolean) => void;
+
 	// Custom system prompt
 	customGregPrompt: string;
+	customExplainerPrompt: string;
 	customProPrompt: string;
 	setCustomGregPrompt: (v: string) => void;
+	setCustomExplainerPrompt: (v: string) => void;
 	setCustomProPrompt: (v: string) => void;
 
 	// Ingest jobs
@@ -121,7 +131,7 @@ interface AppState {
 	setDetail: (item: SearchResult | EndpointCard | null, type?: "endpoints" | "schemas") => void;
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>()((set) => ({
 	theme: getStoredTheme(),
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
 
@@ -137,7 +147,7 @@ export const useStore = create<AppState>((set) => ({
 	viewDocs: (api, method, path, operationId, tag) => set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } }),
 
 	chatMessages: [],
-	gregMode: (() => { try { return localStorage.getItem("greg-mode") !== "false"; } catch { return true; } })(),
+	personality: (() => { try { const v = localStorage.getItem("greg-personality"); return (v === "greg" || v === "verbose" || v === "curt") ? v : localStorage.getItem("greg-mode") === "false" ? "curt" : "greg"; } catch { return "greg" as const; } })(),
 	chatLoading: false,
 	selectedModel: (() => { try { return localStorage.getItem("greg-model") ?? ""; } catch { return ""; } })(),
 	selectedProvider: (() => { try { return localStorage.getItem("greg-provider") ?? ""; } catch { return ""; } })(),
@@ -154,7 +164,7 @@ export const useStore = create<AppState>((set) => ({
 			}
 			return { chatMessages: msgs };
 		}),
-	setGregMode: (v) => { try { localStorage.setItem("greg-mode", String(v)); } catch {} set({ gregMode: v }); },
+	setPersonality: (v) => { try { localStorage.setItem("greg-personality", v); } catch {} set({ personality: v }); },
 	setChatLoading: (v) => set({ chatLoading: v }),
 	setModel: (model, provider) => {
 		try { localStorage.setItem("greg-model", model); localStorage.setItem("greg-provider", provider); } catch {}
@@ -198,9 +208,14 @@ export const useStore = create<AppState>((set) => ({
 	}),
 	newChat: () => set((s) => { s.saveChat(); return { chatMessages: [], activeChatId: null }; }),
 
+	doubleCheck: (() => { try { return localStorage.getItem("greg-double-check") === "true"; } catch { return false; } })(),
+	setDoubleCheck: (v) => { try { localStorage.setItem("greg-double-check", String(v)); } catch {} set({ doubleCheck: v }); },
+
 	customGregPrompt: "",
+	customExplainerPrompt: "",
 	customProPrompt: "",
 	setCustomGregPrompt: (v) => set({ customGregPrompt: v }),
+	setCustomExplainerPrompt: (v) => set({ customExplainerPrompt: v }),
 	setCustomProPrompt: (v) => set({ customProPrompt: v }),
 
 	ingestJobs: [],

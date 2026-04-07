@@ -158,6 +158,13 @@ export function endpointToDocument(endpoint: Endpoint, apiName: string): Documen
 	// Pre-build compact medium_text for LLM consumption
 	metadata.medium_text = buildMediumText(endpoint, metadata);
 
+	// Store stability flag — true if explicitly deprecated or tagged/pathed as unstable/beta
+	const UNSTABLE_PATTERNS = /\b(unstable|beta|experimental|preview|alpha|deprecated)\b/i;
+	const isDeprecated = endpoint.deprecated === true
+		|| endpoint.tags.some(t => UNSTABLE_PATTERNS.test(t))
+		|| UNSTABLE_PATTERNS.test(path);
+	if (isDeprecated) metadata.deprecated = "true";
+
 	// Generate warnings for non-obvious endpoint traits
 	const warnings = generateWarnings(endpoint);
 	if (warnings.length > 0) metadata.warnings = warnings.join("|");

@@ -43,6 +43,7 @@ export interface Endpoint {
 	security?: Record<string, unknown>[];
 	securitySchemes?: Record<string, SecurityScheme>;
 	rateLimits?: { limit?: number; unit?: string };
+	deprecated?: boolean;
 }
 
 export interface SchemaDefinition {

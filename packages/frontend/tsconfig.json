@@ -10,6 +10,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "composite": true,
     "noEmit": true,
     "baseUrl": ".",
     "paths": {

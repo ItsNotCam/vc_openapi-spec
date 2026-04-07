@@ -14,10 +14,11 @@ interface ChatMessage {
 
 interface ChatRequest {
 	messages: ChatMessage[];
-	personality: "greg" | "professional";
+	personality: "greg" | "verbose" | "curt";
 	provider?: "anthropic" | "ollama";
 	model?: string;
 	system_prompt?: string;
+	double_check?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,7 @@ Rules:
   2. **get containers** — \`GET /nodes/{node}/lxc\` for each node
   3. **join by mac** — match network config against source data
 - Wrap endpoint paths in backticks like \`POST /assets/_search\`.
+- MARKDOWN: Never combine # headers with **bold**. Use one or the other, not both. Headers are already visually prominent — bolding them is redundant. Use **bold** inline for emphasis, use # headers for sections.
 - When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Prefer curl, then Python, then TypeScript. Only include the languages asked for.
 - If you have the search_gif tool, use it occasionally for reactions when it fits the vibe (found something, confused, celebrating). Include the result as a markdown image. Don't overdo it — maybe 1 in 4 messages. Bias your GIF searches toward cats, with anime/cartoon as backup (e.g. "cat celebration", "cat confused", "cat thinking", "anime victory").
 - MANDATORY: If you made a mistake, got corrected, said something wrong, or the user calls you out — you MUST use search_gif immediately. Search for something like "cat sorry", "cat oops", "cat embarrassed", or "cat my bad". This is not optional. Every apology needs a cat GIF. No exceptions.
@@ -51,7 +53,7 @@ IMPORTANT: Occasionally and unpredictably (roughly 1 in 5 messages), drop a sing
 
 You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.`;
 
-export const PROFESSIONAL_PROMPT = `You are a senior engineer answering API questions. You are curt. You do not waste words.
+export const CURT_PROMPT = `You are a senior engineer answering API questions. You are curt. You do not waste words.
 
 ABSOLUTE RULE: NEVER output code blocks unless the user literally says "show me code", "write code", "give me code", or "code example". No exceptions. Describe workflows in plain text.
 
@@ -74,8 +76,43 @@ Tool usage:
 Output:
 - Endpoint paths in backticks: \`POST /assets/_search\`.
 - Present endpoints as structured XML: <endpoint method="GET" path="/api/v1/..." api="zerotier" />
+- MARKDOWN: Never combine # headers with **bold**. Use one or the other, not both. Headers are already visually prominent.
 - When code IS explicitly requested by the user: single line breaks only (never double), no type annotations or type safety, as short as possible but still commented. Variables for URLs/keys. Only include the languages asked for.
 - Total prose per response: 1-3 sentences.
+
+You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.`;
+
+export const VERBOSE_PROMPT = `You are a senior API educator. Your job is to help the user deeply understand APIs — not just find endpoints, but truly grasp what they do, why they exist, and how to use them effectively.
+
+Voice:
+- Professional, thorough, and clear. Write in complete sentences with proper grammar.
+- You are teaching, not just answering. Anticipate follow-up questions and address them proactively.
+- Use a warm but authoritative tone — like a knowledgeable colleague walking someone through a system.
+
+When explaining endpoints:
+- **Purpose**: What does this endpoint do and why does it exist? What problem does it solve?
+- **Parameters**: Explain each parameter — what it controls, whether it's required, sensible defaults, and common values. If a parameter name is ambiguous, clarify what it actually means.
+- **Request body**: Walk through the structure. Explain what each field does and how they relate to each other.
+- **Response**: Explain the key fields in the response. What do they represent? Which ones are most useful?
+- **Relationships**: Explain how endpoints connect. "You need to call X first to get the ID, then pass it to Y." Map out the workflow.
+- **Authentication & permissions**: If relevant, explain what auth is needed, what scopes/roles are required, and why.
+- **Common patterns**: If there are pagination, filtering, or sorting patterns, explain how they work.
+- **Gotchas**: Mention any non-obvious behavior, rate limits, or things that commonly trip people up.
+
+Tool usage:
+- Search silently. Never narrate your searches.
+- LOOKUP STRATEGY: Use search first. If search returns no results, check list_apis. Try broader search terms before giving up.
+- Never guess field names, param names, or types. Only use what results return.
+- Always call get_endpoint for detailed information when explaining — the user needs the full picture.
+- Multiple APIs = parallel tool calls in one response.
+- For follow-up requests, use information already in the conversation.
+
+Output:
+- Wrap endpoint paths in backticks: \`POST /assets/_search\`.
+- Use markdown formatting — headers, bold, lists — to structure explanations clearly. But NEVER combine # headers with **bold**. Use one or the other. Headers are already visually prominent — bolding them is redundant.
+- Break complex workflows into numbered steps with explanations for each.
+- No arbitrary length limits — be as thorough as the topic requires. But don't pad with filler.
+- Code blocks only if the user explicitly asks for code.
 
 You are running on model: {MODEL_NAME}. If the user asks what model you are, tell them.`;
 
@@ -139,7 +176,7 @@ const GIF_TOOL = {
 	},
 };
 
-function getChatTools(personality: "greg" | "professional" = "greg", apiSuffix: string = "") {
+function getChatTools(personality: "greg" | "verbose" | "curt" = "greg", apiSuffix: string = "") {
 	const tools = CHAT_TOOLS.map(t => {
 		if (t.name === "search" && apiSuffix) {
 			return { ...t, description: t.description + apiSuffix };
@@ -324,8 +361,9 @@ async function chatAnthropic(
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
-	personality: "greg" | "professional",
+	personality: "greg" | "verbose" | "curt",
 	apiSuffix: string,
+	apiContext: string,
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
 	usage: { input: number; output: number; toolCalls: number },
@@ -333,6 +371,12 @@ async function chatAnthropic(
 ): Promise<void> {
 	const { default: Anthropic } = await import("@anthropic-ai/sdk");
 	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+
+	// Structured system prompt: static personality prompt (cached) + dynamic API list (cached separately)
+	const systemBlocks = [
+		{ type: "text" as const, text: systemPrompt, cache_control: { type: "ephemeral" as const } },
+		{ type: "text" as const, text: apiContext, cache_control: { type: "ephemeral" as const } },
+	];
 
 	type AnthropicMessage = {
 		role: "user" | "assistant";
@@ -348,9 +392,9 @@ async function chatAnthropic(
 	for (let round = 0; round < 10; round++) {
 		const stream = client.messages.stream({
 			model: config.LLM_MODEL,
-			max_tokens: 1024,
+			max_tokens: config.LLM_MAX_TOKENS,
 			temperature: 0.3,
-			system: systemPrompt,
+			system: systemBlocks,
 			messages: apiMessages,
 			tools: getChatTools(personality, apiSuffix),
 		});
@@ -404,9 +448,9 @@ async function chatAnthropic(
 			// Final round with no tools so the model MUST produce text
 			const finalStream = client.messages.stream({
 				model: config.LLM_MODEL,
-				max_tokens: 1024,
+				max_tokens: config.LLM_MAX_TOKENS,
 				temperature: 0.3,
-				system: systemPrompt,
+				system: systemBlocks,
 				messages: apiMessages,
 			});
 			for await (const event of finalStream) {
@@ -451,11 +495,11 @@ async function chatOllama(
 	messages: ChatMessage[],
 	systemPrompt: string,
 	retriever: Retriever,
-	personality: "greg" | "professional",
+	personality: "greg" | "verbose" | "curt",
 	apiSuffix: string,
 	onText: (text: string) => void,
 	onEndpoints: (eps: EndpointCard[]) => void,
-	_onDebug: (entry: Record<string, unknown>) => void,
+	onDebug: (entry: Record<string, unknown>) => void,
 	usage: { input: number; output: number; toolCalls: number },
 ): Promise<void> {
 	const baseUrl = config.OLLAMA_URL ?? "http://localhost:11434";
@@ -532,13 +576,38 @@ async function chatOllama(
 							});
 						}
 					}
-					if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
-					if (chunk.eval_count) usage.output += chunk.eval_count;
+					if (chunk.done) {
+						if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
+						if (chunk.eval_count) usage.output += chunk.eval_count;
+					}
 				} catch {
 					// skip malformed lines
 				}
 			}
 		}
+		// Process any remaining data in buffer (final chunk often lands here without trailing newline)
+		if (buffer.trim()) {
+			try {
+				const chunk = JSON.parse(buffer);
+				if (chunk.message?.content) {
+					onText(chunk.message.content);
+					fullResponse += chunk.message.content;
+				}
+				if (chunk.message?.tool_calls) {
+					hasToolCalls = true;
+					for (const tc of chunk.message.tool_calls) {
+						toolCalls.push({ name: tc.function.name, arguments: tc.function.arguments });
+					}
+				}
+				if (chunk.done) {
+					if (chunk.prompt_eval_count) usage.input += chunk.prompt_eval_count;
+					if (chunk.eval_count) usage.output += chunk.eval_count;
+				}
+			} catch {}
+			buffer = "";
+		}
+
+		onDebug({ event: "round", round, inputTokens: usage.input, outputTokens: usage.output, toolCalls: toolCalls.length, hasToolCalls });
 
 		if (!hasToolCalls) break;
 
@@ -563,7 +632,12 @@ async function chatOllama(
 					capBuf = capLines.pop() ?? "";
 					for (const cl of capLines) {
 						if (!cl.trim()) continue;
-						try { const ch = JSON.parse(cl); if (ch.message?.content) onText(ch.message.content); } catch {}
+						try {
+							const ch = JSON.parse(cl);
+							if (ch.message?.content) onText(ch.message.content);
+							if (ch.done && ch.prompt_eval_count != null) usage.input += ch.prompt_eval_count;
+							if (ch.done && ch.eval_count != null) usage.output += ch.eval_count;
+						} catch {}
 					}
 				}
 			}
@@ -573,8 +647,10 @@ async function chatOllama(
 		ollamaMessages.push({ role: "assistant", content: fullResponse });
 
 		for (const tc of toolCalls) {
+			onDebug({ event: "tool_call", tool: tc.name, input: tc.arguments });
 			const { result, endpoints } = await executeTool(tc.name, tc.arguments, retriever);
 			if (endpoints.length > 0) onEndpoints(endpoints);
+			onDebug({ event: "tool_result", tool: tc.name, resultLength: result.length, endpointCount: endpoints.length });
 			ollamaMessages.push({ role: "tool", content: result });
 			usage.toolCalls++;
 		}
@@ -719,6 +795,176 @@ async function chatOllamaDirect(
 }
 
 // ---------------------------------------------------------------------------
+// Double-Check Verification (Sonnet reviews Greg's output)
+// ---------------------------------------------------------------------------
+
+const VERIFICATION_MODEL = "claude-sonnet-4-20250514";
+
+const VERIFICATION_PROMPT = `You are a double-check assistant. Another AI answered the user's API question. Your job is to verify EVERYTHING it said is correct — both the API-specific claims AND any general statements, logic, or advice.
+
+You have tools to look up the actual indexed API specs. You MUST use them to independently verify every claim the assistant made:
+- Use search to find endpoints the assistant mentioned and confirm they exist
+- Use get_endpoint to pull the full spec and verify parameter names, types, response schemas, auth details
+- If the assistant mentioned endpoints, workflows, or capabilities — look them up yourself, don't trust the assistant's claims
+
+Check for ALL types of errors:
+1. **API facts**: Do the endpoints, methods, parameters, and response shapes match the real specs?
+2. **Hallucinations**: Did the assistant invent endpoints, fields, or parameters that don't exist?
+3. **Logical errors**: Is the described workflow/sequence correct? Are the steps in the right order?
+4. **Omissions**: Did the assistant miss important info the user needs (required params, auth, pagination, gotchas)?
+5. **General accuracy**: Are non-API claims (concepts, definitions, best practices) correct?
+
+IMPORTANT: Do NOT assume the assistant is correct. Look things up yourself and compare.
+
+RESPONSE FORMAT:
+- If everything checks out: respond with ONLY "✓ Verified" (optionally + 1 short sentence confirming what you checked)
+- If there are issues: list ONLY what was wrong and what the correct info is. Use this format:
+  ⚠ **[thing that was wrong]** — [what it should be]
+  Keep it concise. Do NOT rewrite the entire response. Only list the specific corrections needed.`;
+
+const VERIFY_TOOLS = [
+	{
+		name: "search",
+		description: "Search indexed API specs to verify endpoints exist and check their details.",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				query: { type: "string", description: "What to search for" },
+				api: { type: "string", description: "Filter to specific API" },
+				n: { type: "integer", description: "Max results (default: 3)", default: 3 },
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "get_endpoint",
+		description: "Get the full spec for a specific endpoint to verify details.",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				method: { type: "string", description: "HTTP method" },
+				path: { type: "string", description: "Endpoint path" },
+				api: { type: "string", description: "API name" },
+			},
+			required: ["method", "path"],
+		},
+	},
+];
+
+async function runVerification(
+	userQuestion: string,
+	assistantResponse: string,
+	endpoints: EndpointCard[],
+	retriever: Retriever,
+	onComplete: (text: string) => void,
+	onDebug: (entry: Record<string, unknown>) => void,
+): Promise<{ input: number; output: number }> {
+	const { default: Anthropic } = await import("@anthropic-ai/sdk");
+	const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+	const vUsage = { input: 0, output: 0 };
+
+	const endpointContext = endpoints.length > 0
+		? `\n\nEndpoints the assistant referenced:\n${endpoints.map(e => `- ${e.method} ${e.path} (${e.api})`).join("\n")}`
+		: "";
+
+	type AnthropicMessage = {
+		role: "user" | "assistant";
+		content: string | Array<{ type: string; [key: string]: unknown }>;
+	};
+
+	const verifyMessages: AnthropicMessage[] = [
+		{
+			role: "user",
+			content: `USER QUESTION:\n${userQuestion}\n\nASSISTANT RESPONSE:\n${assistantResponse}${endpointContext}\n\nUse the search and get_endpoint tools to independently verify the endpoints and details mentioned in the assistant's response. Look up each endpoint path referenced to confirm it exists and the details are correct. Then provide your verification.`,
+		},
+	];
+
+	onDebug({ event: "verification_start", model: VERIFICATION_MODEL });
+
+	// Tool-use loop (max 5 rounds) — using non-streaming create() for simplicity
+	for (let round = 0; round < 5; round++) {
+		const msg = await client.messages.create({
+			model: VERIFICATION_MODEL,
+			max_tokens: 1024,
+			temperature: 0,
+			system: VERIFICATION_PROMPT,
+			messages: verifyMessages,
+			tools: VERIFY_TOOLS,
+		});
+		vUsage.input += msg.usage.input_tokens;
+		vUsage.output += msg.usage.output_tokens;
+
+		const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+		const contentBlocks: Array<{ type: string; [key: string]: unknown }> = [];
+		let hasToolUse = false;
+
+		for (const block of msg.content) {
+			if (block.type === "tool_use") {
+				hasToolUse = true;
+				toolUseBlocks.push({ id: block.id, name: block.name, input: block.input as Record<string, unknown> });
+			}
+			contentBlocks.push(block as { type: string; [key: string]: unknown });
+		}
+
+		onDebug({ event: "verify_round", round, hasTools: hasToolUse, stopReason: msg.stop_reason });
+
+		if (!hasToolUse) {
+			// Final answer — extract text and we're done
+			const text = msg.content
+				.filter(b => b.type === "text")
+				.map(b => (b as { text?: string }).text ?? "")
+				.join("")
+				.trim();
+			console.log(`[chat] verification complete: ${round + 1} rounds, text length: ${text.length}`);
+			onComplete(text);
+			onDebug({ event: "verification_done", model: VERIFICATION_MODEL, inputTokens: vUsage.input, outputTokens: vUsage.output });
+			return vUsage;
+		}
+
+		// Run tools and continue
+		verifyMessages.push({ role: "assistant", content: contentBlocks });
+		const toolResults: Array<{ type: "tool_result"; tool_use_id: string; content: string }> = [];
+		for (const tool of toolUseBlocks) {
+			onDebug({ event: "verify_tool_call", name: tool.name, input: tool.input });
+			const { result } = await executeTool(tool.name, tool.input, retriever);
+			onDebug({ event: "verify_tool_result", name: tool.name, resultLength: result.length });
+			toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
+		}
+		verifyMessages.push({ role: "user", content: toolResults });
+	}
+
+	// Hit max rounds — force a final answer with no tools
+	// Add an explicit instruction to synthesize findings rather than narrate more tool calls
+	verifyMessages.push({
+		role: "user",
+		content: "You have completed your research. Based on everything you found above, provide your final verification now. Do not mention doing more lookups — just give the verdict.",
+	});
+	onDebug({ event: "verify_final_pass" });
+	const finalMsg = await client.messages.create({
+		model: VERIFICATION_MODEL,
+		max_tokens: 1024,
+		temperature: 0,
+		system: VERIFICATION_PROMPT,
+		messages: verifyMessages,
+		tools: VERIFY_TOOLS,
+		tool_choice: { type: "none" },
+	});
+	vUsage.input += finalMsg.usage.input_tokens;
+	vUsage.output += finalMsg.usage.output_tokens;
+	const resultText = finalMsg.content
+		.filter(b => b.type === "text")
+		.map(b => (b as { text?: string }).text ?? "")
+		.join("")
+		.trim();
+
+	console.log(`[chat] verification complete (max rounds): text length: ${resultText.length}`);
+	onComplete(resultText);
+	onDebug({ event: "verification_done", model: VERIFICATION_MODEL, inputTokens: vUsage.input, outputTokens: vUsage.output });
+
+	return vUsage;
+}
+
+// ---------------------------------------------------------------------------
 // HTTP Handler
 // ---------------------------------------------------------------------------
 
@@ -730,7 +976,7 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	}
 
 	const personality = body.personality ?? "greg";
-	const defaultPrompt = personality === "greg" ? GREG_PROMPT : PROFESSIONAL_PROMPT;
+	const defaultPrompt = personality === "greg" ? GREG_PROMPT : personality === "verbose" ? VERBOSE_PROMPT : CURT_PROMPT;
 	const rawPrompt = body.system_prompt || defaultPrompt;
 	// If model is specified, infer provider from model name if not explicitly set
 	let provider = body.provider ?? config.LLM_PROVIDER;
@@ -742,11 +988,14 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	if (body.model) (config as Record<string, unknown>).LLM_MODEL = body.model;
 	const modelName = config.LLM_MODEL;
 	const systemPrompt = rawPrompt.replace("{MODEL_NAME}", modelName);
-	// Build indexed API suffix for tool descriptions
+	// Build indexed API list for system prompt and tool descriptions
 	const apis = await retriever.listApis();
 	const apiSuffix = apis.length > 0
 		? ` Currently indexed: ${apis.map((a) => a.name).join(", ")}.`
 		: "";
+	const apiContext = apis.length > 0
+		? `\n\nCurrently indexed APIs:\n${apis.map((a) => `- ${a.name} (${a.endpoints} endpoints, ${a.schemas} schemas)`).join("\n")}\nYou already know these APIs are available — do NOT call list_apis to confirm. Go straight to searching.`
+		: "\n\nNo APIs are currently indexed.";
 	console.log(`[chat] provider=${provider} model=${modelName}`);
 
 	if (provider === "anthropic" && !config.ANTHROPIC_API_KEY) {
@@ -765,17 +1014,22 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 	const onText = (text: string) => send({ type: "text", text });
 	const onEndpoints = (eps: EndpointCard[]) => send({ type: "endpoints", data: eps });
 	const onDebug = (entry: Record<string, unknown>) => send({ type: "debug", ...entry });
+	const onVerificationText = (text: string) => send({ type: "verification_text", text });
+	const allEndpoints: EndpointCard[] = [];
+	const wrappedOnEndpoints = (eps: EndpointCard[]) => { allEndpoints.push(...eps); onEndpoints(eps); };
 
 	// Track token usage
 	const usage = { input: 0, output: 0, toolCalls: 0 };
+	let accumulatedText = "";
+	const wrappedOnText = (text: string) => { accumulatedText += text; onText(text); };
 
 	(async () => {
 		try {
 			console.log(`[chat] starting ${provider} chat`);
 			if (provider === "anthropic") {
-				await chatAnthropic(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, usage, onDebug);
+				await chatAnthropic(body.messages, systemPrompt, retriever, personality, apiSuffix, apiContext, wrappedOnText, wrappedOnEndpoints, usage, onDebug);
 			} else {
-				await chatOllama(body.messages, systemPrompt, retriever, personality, apiSuffix, onText, onEndpoints, onDebug, usage);
+				await chatOllama(body.messages, systemPrompt + apiContext, retriever, personality, apiSuffix, wrappedOnText, wrappedOnEndpoints, onDebug, usage);
 			}
 			// Random reaction GIF in greg mode — chance scales with token usage (20% base → 80% at 30k+)
 			if (personality === "greg" && config.GIPHY_API_KEY) {
@@ -784,10 +1038,22 @@ export async function handleChat(c: Context, retriever: Retriever): Promise<Resp
 				const chance = lerp(0.2, 0.8, t);
 				if (Math.random() < chance) {
 					const gif = await fetchRandomGif();
-					if (gif) onText(`\n\n${gif}`);
+					if (gif) { wrappedOnText(`\n\n${gif}`); }
 				}
 			}
-			send({ type: "done", model: modelName, provider, usage });
+			// Double-check verification pass
+			let verificationUsage: { input: number; output: number } | undefined;
+			if (body.double_check && config.ANTHROPIC_API_KEY && accumulatedText.trim()) {
+				const lastUserMsg = body.messages[body.messages.length - 1]?.content ?? "";
+				console.log(`[chat] running verification with ${VERIFICATION_MODEL}`);
+				try {
+					verificationUsage = await runVerification(lastUserMsg, accumulatedText, allEndpoints, retriever, onVerificationText, onDebug);
+				} catch (err) {
+					console.error("[chat] verification error:", err);
+					send({ type: "verification_text", text: `\n[verification error: ${err instanceof Error ? err.message : "unknown"}]` });
+				}
+			}
+			send({ type: "done", model: modelName, provider, usage, verificationUsage });
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : JSON.stringify(err) ?? "unknown error";
 			console.error("[chat] error:", err);

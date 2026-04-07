@@ -21,7 +21,7 @@ import type { EndpointCard } from "../lib/api";
 import { useStore } from "../store/store";
 import type { ChatMsg } from "../store/store";
 import EpCard from "../components/EpCard";
-import DetailPanel from "../components/DetailPanel";
+
 
 // Per-million-token pricing for Anthropic models (input, output)
 const ANTHROPIC_PRICING: Record<string, [number, number]> = {
@@ -49,6 +49,12 @@ function estimateCost(model: string | undefined, usage: { input: number; output:
 function cleanText(raw: string): string {
 	const text = raw
 		.replace(/<endpoint[^>]*\/?>/g, "")
+		// Unwrap fenced code blocks that are actually markdown tables
+		.replace(/```[^\n]*\n([\s\S]*?)```/g, (match, inner: string) => {
+			const lines = inner.trim().split("\n").filter((l: string) => l.trim());
+			const isTable = lines.length >= 2 && lines.every((l: string) => l.trimStart().startsWith("|"));
+			return isTable ? inner.trim() : match;
+		})
 		.replace(/\n{3,}/g, "\n\n")
 		// Break when colon is immediately followed by a capital letter (no space/newline)
 		.replace(/:([A-Z])/g, ":\n\n$1")
@@ -127,8 +133,15 @@ function CopyBtn({ text }: { text: string }) {
 	);
 }
 
-function InputBoxWrapper({ children }: { children: React.ReactNode }) {
+const PERSONALITY_COLOR: Record<string, string> = {
+	greg: C.green,
+	verbose: "#f59e0b",
+	curt: "#A1A1AA",
+};
+
+function InputBoxWrapper({ children, personality }: { children: React.ReactNode; personality: "greg" | "verbose" | "curt" }) {
 	const [focused, setFocused] = useState(false);
+	const color = PERSONALITY_COLOR[personality];
 	return (
 		<div
 			onFocusCapture={() => setFocused(true)}
@@ -137,11 +150,11 @@ function InputBoxWrapper({ children }: { children: React.ReactNode }) {
 				display: "flex",
 				alignItems: "center",
 				gap: 8,
-				background: C.surface,
-				border: `1px solid ${focused ? C.borderAccent : C.border}`,
+				background: personality === "greg" ? C.surface : personality === "verbose" ? "rgba(245,158,11,0.04)" : "rgba(161,161,170,0.04)",
+				border: `1px solid ${focused ? color : C.border}`,
 				borderRadius: 10,
 				padding: "8px 10px",
-				transition: "border-color 0.15s",
+				transition: "border-color 0.15s, background 0.15s",
 			}}
 		>
 			{children}
@@ -193,14 +206,15 @@ function CodeDropdown({ code, lang, lineCount, blockKey }: { code: string; lang:
 	);
 }
 
-function StreamingText({ text }: { text: string }) {
+function StreamingText({ text, personality }: { text: string; personality?: "greg" | "verbose" | "curt" }) {
+	const dotColor = PERSONALITY_COLOR[personality ?? "greg"] ?? C.green;
 	const cleaned = cleanText(text);
 	if (!cleaned) return (
 		<span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 0" }}>
 			{[0, 1, 2].map((i) => (
 				<span key={i} style={{
 					width: 6, height: 6, borderRadius: "50%",
-					background: "var(--g-green)",
+					background: dotColor,
 					display: "inline-block",
 					animation: `greg-bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
 				}} />
@@ -272,7 +286,7 @@ function stableKey(s: string): string {
 	return String(h >>> 0);
 }
 
-const mdComponents = (msgKey: number, langMap: Record<string, string>) => ({
+const mdComponents = (msgKey: number | string, langMap: Record<string, string>) => ({
 	code({ className, children }: { className?: string; children?: React.ReactNode }) {
 		const match = /language-(\w+)/.exec(String(className ?? ""));
 		const code = String(children ?? "").replace(/\n$/, "");
@@ -339,7 +353,7 @@ function LiDropdown({ children, index }: { children?: React.ReactNode; index: nu
 	);
 }
 
-function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number; langMap: Record<string, string>; defaultOpen: boolean }) {
+function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title: string; body: string; msgKey: number | string; langMap: Record<string, string>; defaultOpen: boolean }) {
 	const [open, setOpen] = useState(defaultOpen);
 	return (
 		<div style={{ marginBottom: 6 }}>
@@ -362,7 +376,7 @@ function SectionDropdown({ title, body, msgKey, langMap, defaultOpen }: { title:
 	);
 }
 
-function GregMarkdown({ text, msgKey }: { text: string; msgKey: number }) {
+function GregMarkdown({ text, msgKey }: { text: string; msgKey: number | string }) {
 	const langMap: Record<string, string> = { ts: "typescript", js: "javascript", py: "python", sh: "bash", yml: "yaml" };
 
 	// Split into sections by headings — only use dropdowns if 2+ headings
@@ -388,7 +402,7 @@ function GregMarkdown({ text, msgKey }: { text: string; msgKey: number }) {
 					<ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents(msgKey, langMap) as never}>{sections.preamble}</ReactMarkdown>
 				)}
 				{sections.items.map((s, i) => (
-					<SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={i === 0} />
+					<SectionDropdown key={i} title={s.title} body={s.body} msgKey={msgKey} langMap={langMap} defaultOpen={false} />
 				))}
 			</>
 		);
@@ -453,15 +467,27 @@ function EndpointDropdown({ endpoints, onSelect }: { endpoints: EndpointCard[]; 
 function DebugPanel({ entries, model, onClose }: { entries: Record<string, unknown>[]; model?: string; onClose: () => void }) {
 	const rounds = entries.filter((e) => (e as { event: string }).event === "round");
 	const lastRound = rounds[rounds.length - 1] as { totalInput?: number; totalOutput?: number } | undefined;
-	const totalTokens = lastRound ? ((lastRound.totalInput ?? 0) + (lastRound.totalOutput ?? 0)) : 0;
+	const primaryTokens = lastRound ? ((lastRound.totalInput ?? 0) + (lastRound.totalOutput ?? 0)) : 0;
 	const toolCallCount = entries.filter((e) => (e as { event: string }).event === "tool_call").length;
-	const cost = estimateCost(model, {
+
+	// Verification tokens
+	const verifyEntry = entries.find((e) => (e as { event: string }).event === "verification_done") as { inputTokens?: number; outputTokens?: number } | undefined;
+	const verifyTokens = verifyEntry ? ((verifyEntry.inputTokens ?? 0) + (verifyEntry.outputTokens ?? 0)) : 0;
+	const grandTotal = primaryTokens + verifyTokens;
+
+	const primaryCost = estimateCost(model, {
 		input: (lastRound?.totalInput ?? 0),
 		output: (lastRound?.totalOutput ?? 0),
 	});
+	const verifyCost = verifyEntry ? estimateCost("claude-sonnet-4", {
+		input: verifyEntry.inputTokens ?? 0,
+		output: verifyEntry.outputTokens ?? 0,
+	}) : null;
+	const totalCostNum = (primaryCost ? parseFloat(primaryCost) : 0) + (verifyCost ? parseFloat(verifyCost) : 0);
+	const cost = totalCostNum > 0 ? totalCostNum.toFixed(Math.max(2, 6 - Math.floor(Math.log10(totalCostNum)))) : primaryCost;
 
 	return (
-		<div style={{ width: 300, flexShrink: 0, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: C.surface }}>
+		<div style={{ width: 300, flexShrink: 0, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: C.surface, minHeight: 0, overflow: "hidden" }}>
 			{/* Header */}
 			<div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", background: C.bg, flexShrink: 0 }}>
 				<span style={{ fontSize: 12, fontWeight: 500, color: C.textMuted, flex: 1 }}>Debug trace</span>
@@ -470,7 +496,7 @@ function DebugPanel({ entries, model, onClose }: { entries: Record<string, unkno
 			</div>
 
 			{/* Scroll area */}
-			<div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column" }}>
+			<div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "10px 12px", minHeight: 0 }}>
 				{entries.length === 0 ? (
 					<div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: C.textDim, fontSize: 12 }}>
 						No debug data yet
@@ -481,18 +507,30 @@ function DebugPanel({ entries, model, onClose }: { entries: Record<string, unkno
 			</div>
 
 			{/* Token bar */}
-			<div style={{ padding: "7px 12px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 14, background: C.bg, flexShrink: 0 }}>
-				<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-					<span style={{ color: C.textMuted }}>{totalTokens.toLocaleString()}</span> tokens
-				</span>
-				<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-					<span style={{ color: C.textMuted }}>{toolCallCount}</span> tool calls
-				</span>
-				{cost && (
+			<div style={{ padding: "7px 12px", borderTop: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 4, background: C.bg, flexShrink: 0 }}>
+				<div style={{ display: "flex", gap: 14 }}>
 					<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
-						<span style={{ color: C.textMuted }}>${cost}</span>
+						primary <span style={{ color: C.textMuted }}>{primaryTokens.toLocaleString()}</span>
 					</span>
-				)}
+					{verifyTokens > 0 && (
+						<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
+							double check <span style={{ color: "#10b981" }}>{verifyTokens.toLocaleString()}</span>
+						</span>
+					)}
+					<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
+						<span style={{ color: C.textMuted }}>{toolCallCount}</span> tools
+					</span>
+				</div>
+				<div style={{ display: "flex", gap: 14 }}>
+					<span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 600, color: C.text }}>
+						total {grandTotal.toLocaleString()} tokens
+					</span>
+					{cost && (
+						<span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>
+							${cost}
+						</span>
+					)}
+				</div>
 			</div>
 		</div>
 	);
@@ -595,6 +633,74 @@ function DebugPanelEntries({ entries }: { entries: Record<string, unknown>[] }) 
 	return <>{rows}</>;
 }
 
+const BUBBLE_STYLES: Record<string, { bg: string; border: string }> = {
+	greg: { bg: "rgba(52,211,153,0.06)", border: "rgba(52,211,153,0.2)" },
+	verbose: { bg: "rgba(245,158,11,0.06)", border: "rgba(245,158,11,0.2)" },
+	curt: { bg: "rgba(161,161,170,0.06)", border: "rgba(161,161,170,0.2)" },
+};
+
+function VerificationBadge({ text, usage, msgKey, streaming }: { text: string; usage?: { input: number; output: number }; msgKey: number | string; streaming?: boolean }) {
+	const [open, setOpen] = useState(false);
+	const isVerified = text.trim().startsWith("✓");
+	const tokenCount = usage ? (usage.input + usage.output) : 0;
+
+	// Still loading
+	if (streaming && !text.trim()) {
+		return (
+			<div style={{ marginTop: 10, padding: "6px 10px", display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textDim, borderTop: `1px solid ${C.border}` }}>
+				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}>
+					<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+				</svg>
+				<span>double checking...</span>
+				<style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+			</div>
+		);
+	}
+
+	if (!text.trim()) return null;
+
+	// Verified — simple inline badge
+	if (isVerified) {
+		return (
+			<div style={{ marginTop: 10, padding: "6px 0", display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#10b981", borderTop: `1px solid ${C.border}` }}>
+				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+				<span>{text.trim()}</span>
+				{tokenCount > 0 && <span style={{ color: C.textDim, fontSize: 10 }}>({tokenCount.toLocaleString()} tok)</span>}
+			</div>
+		);
+	}
+
+	// Correction — clickable dropdown
+	return (
+		<div style={{ marginTop: 10, borderTop: `1px solid ${C.border}` }}>
+			<button
+				onClick={() => setOpen(!open)}
+				style={{
+					display: "flex", alignItems: "center", gap: 5, width: "100%",
+					padding: "8px 0", border: "none", background: "none", cursor: "pointer",
+					fontSize: 11, fontWeight: 600, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 0.5,
+				}}
+			>
+				<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+					<path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<span>Corrected by Sonnet</span>
+				{tokenCount > 0 && <span style={{ fontWeight: 400, color: C.textDim }}>{tokenCount.toLocaleString()} tok</span>}
+				<span style={{ flex: 1 }} />
+				<svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+					style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+					<path d="M6 9l6 6 6-6" />
+				</svg>
+			</button>
+			{open && (
+				<div style={{ paddingBottom: 4, fontSize: 14, lineHeight: 1.6, color: C.textMuted }}>
+					<GregMarkdown text={cleanText(text)} msgKey={`${msgKey}-verify`} />
+				</div>
+			)}
+		</div>
+	);
+}
+
 const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShowDebug, loadingGif }: {
 	msg: ChatMsg;
 	i: number;
@@ -602,13 +708,15 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 	onShowDebug: (idx: number) => void;
 	loadingGif?: string | null;
 }) {
+	const p = msg.personality ?? "greg";
+	const bubbleStyle = BUBBLE_STYLES[p] ?? BUBBLE_STYLES.greg;
 	return (
 		<div style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
 			<div style={{ maxWidth: "85%" }}>
 				{msg.role === "assistant" && (
 					<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-						<span style={{ fontSize: 13, fontWeight: 500, color: C.green }}>greg</span>
-						{msg.model && !msg.streaming && (
+						<span style={{ fontSize: 13, fontWeight: 500, color: PERSONALITY_COLOR[p] }}>greg</span>
+						{msg.model && (
 							<span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>{msg.model}</span>
 						)}
 						{msg.debug && msg.debug.length > 0 && !msg.streaming && (
@@ -630,8 +738,8 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 						borderRadius: msg.role === "user" ? "12px 12px 2px 12px" : 10,
 						fontSize: 14,
 						lineHeight: 1.6,
-						background: msg.role === "user" ? C.userBg : C.gregBg,
-						border: `1px solid ${msg.role === "user" ? C.borderAccent : C.border}`,
+						background: msg.role === "user" ? C.userBg : bubbleStyle.bg,
+						border: `1px solid ${msg.role === "user" ? C.borderAccent : bubbleStyle.border}`,
 						color: msg.role === "user" ? C.text : C.textMuted,
 					}}
 				>
@@ -642,10 +750,13 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 							{loadingGif && !msg.text && (
 								<img src={loadingGif} alt="greg thinking" style={{ maxHeight: 180, maxWidth: "100%", borderRadius: 8, marginBottom: 6, display: "block" }} />
 							)}
-							<StreamingText text={msg.text} />
+							<StreamingText text={msg.text} personality={msg.personality} />
 						</>
 					) : (
 						<GregMarkdown text={cleanText(msg.text)} msgKey={i} />
+					)}
+					{(msg.verificationText !== undefined || msg.verificationStreaming) && (
+						<VerificationBadge text={msg.verificationText ?? ""} usage={msg.verificationUsage} msgKey={i} streaming={msg.verificationStreaming} />
 					)}
 				</div>
 				{msg.endpoints && msg.endpoints.length > 0 && (
@@ -655,6 +766,140 @@ const ChatMessage = memo(function ChatMessage({ msg, i, onSelectEndpoint, onShow
 		</div>
 	);
 });
+
+function SwaggerPanel({ item, type, onClose }: { item: { method?: string; path?: string; api: string; name?: string }; type: "endpoints" | "schemas"; onClose: () => void }) {
+	const theme = useStore((s) => s.theme);
+	const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+	const initWidth = useMemo(() => {
+		try { const v = parseInt(localStorage.getItem("greg-panel-width") ?? ""); return v > 200 ? v : 480; } catch { return 480; }
+	}, []);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const handleRef = useRef<HTMLDivElement>(null);
+
+	const onMouseDown = useCallback((e: React.MouseEvent) => {
+		e.preventDefault();
+		const container = containerRef.current;
+		const handle = handleRef.current;
+		if (!container) return;
+		const startX = e.clientX;
+		const startW = container.offsetWidth;
+		// Show overlay to block iframe from eating events
+		const overlay = document.createElement("div");
+		overlay.style.cssText = "position:fixed;inset:0;z-index:9999;cursor:col-resize;";
+		document.body.appendChild(overlay);
+		if (handle) { handle.style.background = C.accent; handle.style.opacity = "1"; }
+
+		const onMove = (ev: MouseEvent) => {
+			const delta = startX - ev.clientX;
+			const next = Math.max(280, Math.min(window.innerWidth * 0.7, startW + delta));
+			container.style.width = next + "px";
+		};
+		const onUp = () => {
+			document.removeEventListener("mousemove", onMove);
+			document.removeEventListener("mouseup", onUp);
+			overlay.remove();
+			document.body.style.cursor = "";
+			document.body.style.userSelect = "";
+			if (handle) { handle.style.background = ""; handle.style.opacity = ""; }
+			try { localStorage.setItem("greg-panel-width", String(container.offsetWidth)); } catch {}
+		};
+		document.addEventListener("mousemove", onMove);
+		document.addEventListener("mouseup", onUp);
+		document.body.style.cursor = "col-resize";
+		document.body.style.userSelect = "none";
+	}, []);
+
+	const isEp = type === "endpoints" && item.method && item.path;
+	const iframeRef = useRef<HTMLIFrameElement>(null);
+	const loadedApiRef = useRef<string>("");
+
+	// Build iframe src — only changes when the API name or theme changes
+	const baseSrc = useMemo(() => {
+		const params = new URLSearchParams();
+		if (isEp) {
+			params.set("method", item.method!);
+			params.set("path", item.path!);
+		}
+		params.set("theme", isDark ? "dark" : "light");
+		return `/openapi/docs/${encodeURIComponent(item.api)}?${params}`;
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [item.api, isDark]);
+
+	// When the item changes but we're on the same API, postMessage to scroll instead of reloading
+	useEffect(() => {
+		if (!isEp) return;
+		if (loadedApiRef.current === item.api && iframeRef.current?.contentWindow) {
+			iframeRef.current.contentWindow.postMessage(
+				{ type: "scrollToEndpoint", method: item.method, path: item.path },
+				"*",
+			);
+		}
+	}, [item.method, item.path, item.api, isEp]);
+
+	// Track which API the iframe has loaded
+	const onIframeLoad = useCallback(() => {
+		loadedApiRef.current = item.api;
+	}, [item.api]);
+
+	return (
+		<div ref={containerRef} style={{ width: initWidth, flexShrink: 0, display: "flex", position: "relative", height: "100%" }}>
+			{/* Drag handle */}
+			<div
+				onMouseDown={onMouseDown}
+				style={{
+					width: 8,
+					cursor: "col-resize",
+					flexShrink: 0,
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "center",
+				}}
+			>
+				<div ref={handleRef} style={{
+					width: 3,
+					height: 36,
+					borderRadius: 2,
+					background: C.textDim,
+					opacity: 0.5,
+				}} />
+			</div>
+			{/* Panel content */}
+			<div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+				{/* Header */}
+				<div style={{
+					display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
+					background: C.surface, borderBottom: `1px solid ${C.border}`, borderRadius: "6px 6px 0 0",
+				}}>
+					<span style={{ fontSize: 12, fontWeight: 600, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+						{isEp ? "Endpoint" : "Schema"} — {item.api}
+					</span>
+					<span style={{ flex: 1 }} />
+					<button
+						onClick={onClose}
+						style={{ display: "flex", border: "none", cursor: "pointer", padding: 3, background: "transparent", color: C.textDim, borderRadius: 4 }}
+					>
+						{Ic.x()}
+					</button>
+				</div>
+				{/* Swagger iframe */}
+				<iframe
+					ref={iframeRef}
+					src={baseSrc}
+					onLoad={onIframeLoad}
+					style={{
+						flex: 1,
+						border: `1px solid ${C.border}`,
+						borderTop: "none",
+						borderRadius: "0 0 6px 6px",
+						background: C.surface,
+						width: "100%",
+					}}
+					title={`${item.api} docs`}
+				/>
+			</div>
+		</div>
+	);
+}
 
 const GREG_GREETINGS = [
 	"greg here. what api u need",
@@ -666,24 +911,26 @@ const GREG_GREETINGS = [
 	"ok greg ready. go",
 ];
 
-function getGreeting(isGreg: boolean): string {
-	if (!isGreg) return "How can I help you with your API documentation?";
+function getGreeting(personality: "greg" | "verbose" | "curt"): string {
+	if (personality === "verbose") return "Ready to explain your APIs in depth. What would you like to understand?";
+	if (personality === "curt") return "What can I help you with?";
 	return GREG_GREETINGS[Math.floor(Math.random() * GREG_GREETINGS.length)];
 }
 
 export default function GregPage() {
 	const {
 		chatMessages,
-		gregMode,
+		personality,
 		chatLoading,
 		addChatMessage,
 		updateLastAssistant,
-		setGregMode,
+		setPersonality,
 		setChatLoading,
 		detailItem,
 		detailType,
 		setDetail,
 		customGregPrompt,
+		customExplainerPrompt,
 		customProPrompt,
 		selectedModel,
 		selectedProvider,
@@ -693,11 +940,15 @@ export default function GregPage() {
 		loadChat,
 		deleteChat,
 		saveChat,
+		setDoubleCheck,
 	} = useStore();
+	const doubleCheck = false; // disabled
+
+	const isGregLike = personality === "greg";
 
 	const [greetingGif, setGreetingGif] = useState<string | null>(null);
 	const [loadingGif, setLoadingGif] = useState<string | null>(null);
-	const [greeting, setGreetingText] = useState(() => getGreeting(gregMode));
+	const [greeting, setGreetingText] = useState(() => getGreeting(personality));
 	const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);
@@ -706,21 +957,21 @@ export default function GregPage() {
 
 	useEffect(() => { listModels().then(setModels).catch(() => {}); }, []);
 	useEffect(() => { fetchSuggestions().then(setSuggestions).catch(() => {}); }, []);
-	useEffect(() => { setGreetingText(getGreeting(gregMode)); }, [gregMode]);
+	useEffect(() => { setGreetingText(getGreeting(personality)); }, [personality]);
 
 	const fetchGreetingGif = useCallback(() => {
 		fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setGreetingGif(d.url ?? null)).catch(() => {});
 	}, []);
 
 	// Fetch greeting gif on initial mount
-	useEffect(() => { if (gregMode) fetchGreetingGif(); }, []);
+	useEffect(() => { if (isGregLike) fetchGreetingGif(); }, []);
 
 	const handleNewChat = useCallback(() => {
 		newChat();
 		setGreetingGif(null);
 		fetchSuggestions().then(setSuggestions).catch(() => {});
-		if (gregMode) fetchGreetingGif();
-	}, [gregMode, newChat, fetchGreetingGif]);
+		if (isGregLike) fetchGreetingGif();
+	}, [isGregLike, newChat, fetchGreetingGif]);
 
 	const handleSelectEndpoint = useCallback((ep: EndpointCard) => setDetail(ep, "endpoints"), [setDetail]);
 	const [input, setInput] = useState("");
@@ -760,10 +1011,10 @@ export default function GregPage() {
 		setInput("");
 		setUserScrolled(false);
 		setLoadingGif(null);
-		addChatMessage({ role: "user", text });
-		addChatMessage({ role: "assistant", text: "", streaming: true });
+		addChatMessage({ role: "user", text, personality });
+		addChatMessage({ role: "assistant", text: "", streaming: true, model: selectedModel || undefined, personality });
 		setChatLoading(true);
-		if (gregMode) {
+		if (isGregLike) {
 			fetch("/api/greeting-gif").then((r) => r.json()).then((d) => setLoadingGif(d.url ?? null)).catch(() => {});
 		}
 
@@ -773,19 +1024,21 @@ export default function GregPage() {
 		];
 
 		let accumulated = "";
+		let verificationText = "";
 		let doneModel: string | undefined;
 		let doneUsage: { input: number; output: number; toolCalls: number } | undefined;
+		let doneVerificationUsage: { input: number; output: number } | undefined;
 		const endpointMap = new Map<string, EndpointCard>();
 		const debugLog: Record<string, unknown>[] = [];
 
 		try {
-			const customPrompt = gregMode ? customGregPrompt : customProPrompt;
+			const customPrompt = personality === "greg" ? customGregPrompt : personality === "verbose" ? customExplainerPrompt : customProPrompt;
 			const abort = new AbortController();
 			abortRef.current = abort;
 			for await (const event of streamChat(
 				history,
-				gregMode ? "greg" : "professional",
-				{ systemPrompt: customPrompt || undefined, model: selectedModel || undefined, provider: selectedProvider || undefined },
+				personality,
+				{ systemPrompt: customPrompt || undefined, model: selectedModel || undefined, provider: selectedProvider || undefined, doubleCheck: doubleCheck || undefined },
 				abort.signal,
 			)) {
 				switch (event.type) {
@@ -803,16 +1056,33 @@ export default function GregPage() {
 							}
 						}
 						break;
+					case "verification_text":
+						// Arrives as one complete message (not streamed)
+						verificationText = event.text ?? "";
+						updateLastAssistant((m) => ({ ...m, verificationText, verificationStreaming: false }));
+						break;
 					case "error":
 						accumulated += `\n[error: ${event.error}]`;
 						updateLastAssistant((m) => ({ ...m, text: accumulated }));
 						break;
 					case "debug":
-						debugLog.push(event);
+						debugLog.push(event as unknown as Record<string, unknown>);
+						if (event.event === "verification_start") {
+							// Greg is done, verification is starting — render Greg's markdown, show checking indicator
+							const eps = [...endpointMap.values()];
+							updateLastAssistant((m) => ({
+								...m,
+								streaming: false,
+								endpoints: eps.length > 0 ? eps : m.endpoints,
+								verificationStreaming: true,
+								verificationText: "",
+							}));
+						}
 						break;
 					case "done":
 						doneModel = event.model;
 						doneUsage = event.usage ? { ...event.usage, toolCalls: (event.usage as { toolCalls?: number }).toolCalls ?? 0 } : undefined;
+						doneVerificationUsage = (event as { verificationUsage?: { input: number; output: number } }).verificationUsage;
 						break;
 				}
 			}
@@ -826,9 +1096,12 @@ export default function GregPage() {
 		updateLastAssistant((m) => ({
 			...m,
 			streaming: false,
+			verificationStreaming: false,
 			endpoints: dedupedEndpoints.length > 0 ? dedupedEndpoints : undefined,
 			model: doneModel,
 			usage: doneUsage,
+			verificationUsage: doneVerificationUsage,
+			verificationText: verificationText || undefined,
 			debug: debugLog.length > 0 ? debugLog : undefined,
 		}));
 		saveChat();
@@ -853,11 +1126,12 @@ export default function GregPage() {
 						width: 42,
 						height: 42,
 						borderRadius: 10,
-						background: C.green,
+						background: PERSONALITY_COLOR[personality],
 						display: "flex",
 						alignItems: "center",
 						justifyContent: "center",
 						flexShrink: 0,
+						transition: "background 0.15s",
 					}}
 				>
 					<svg width={26} height={26} viewBox="0 0 20 20" fill="none">
@@ -866,52 +1140,43 @@ export default function GregPage() {
 						<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
 					</svg>
 				</div>
-				<span style={{ fontSize: 22, fontWeight: 600, color: C.text }}>greg</span>
-				<span style={{ fontSize: 14, color: C.textDim }}>{gregMode ? "knows ur apis" : "API Documentation Assistant"}</span>
+				<span style={{ fontSize: 22, fontWeight: 600, color: PERSONALITY_COLOR[personality], transition: "color 0.15s" }}>greg</span>
+				<span style={{ fontSize: 13, color: C.textDim }}>{personality === "greg" ? "casual · finds endpoints fast" : personality === "curt" ? "minimal · straight answers" : "thorough · explains how & why"}</span>
 				<span style={{ flex: 1 }} />
 
-				{/* Personality toggle */}
+				{/* Personality selector */}
 				<div
-					onClick={() => setGregMode(!gregMode)}
 					style={{
 						display: "flex",
 						alignItems: "center",
-						gap: 8,
-						cursor: "pointer",
 						fontSize: 14,
-						color: C.textDim,
 						height: 36,
-						padding: "0 12px",
 						borderRadius: 8,
 						background: C.surface,
 						border: `1px solid ${C.border}`,
+						overflow: "hidden",
 					}}
 				>
-					<div
-						style={{
-							width: 32,
-							height: 18,
-							borderRadius: 9,
-							background: gregMode ? "rgba(52,211,153,0.3)" : C.border,
-							position: "relative",
-							transition: "background 0.15s",
-							flexShrink: 0,
-						}}
-					>
+					{(["greg", "curt", "verbose"] as const).map((p) => (
 						<div
+							key={p}
+							onClick={() => setPersonality(p)}
 							style={{
-								width: 12,
-								height: 12,
-								borderRadius: 6,
-								background: gregMode ? C.green : C.textDim,
-								position: "absolute",
-								top: 3,
-								left: gregMode ? 17 : 3,
-								transition: "left 0.15s",
+								padding: "0 12px",
+								height: "100%",
+								display: "flex",
+								alignItems: "center",
+								cursor: "pointer",
+								color: personality === p ? (p === "greg" ? C.green : p === "verbose" ? "#f59e0b" : C.accent) : C.textDim,
+								background: personality === p ? (p === "greg" ? "rgba(52,211,153,0.1)" : p === "verbose" ? "rgba(245,158,11,0.1)" : "rgba(161,161,170,0.1)") : "transparent",
+								fontWeight: personality === p ? 600 : 400,
+								transition: "all 0.15s",
+								borderRight: p !== "verbose" ? `1px solid ${C.border}` : "none",
 							}}
-						/>
-					</div>
-					{gregMode ? "greg" : "professional"}
+						>
+							{p}
+						</div>
+					))}
 				</div>
 
 				{/* Model picker */}
@@ -948,65 +1213,28 @@ export default function GregPage() {
 					)}
 				</select>
 
+				{/* Double-check toggle — disabled */}
+
 				{/* History */}
 				<button
 					onClick={() => setSidebarOpen(!sidebarOpen)}
+					title="Chat history"
 					style={{
 						display: "flex",
 						alignItems: "center",
-						gap: 6,
-						fontSize: 16,
-						border: `1px solid ${C.border}`,
-						cursor: "pointer",
-						padding: "6px 12px",
-						borderRadius: 8,
-						background: C.surface,
-						color: C.textDim,
-					}}
-				>
-					{Ic.doc(16)}
-				</button>
-
-				{/* New chat */}
-				<button
-					onClick={handleNewChat}
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 6,
-						fontSize: 20,
-						border: `1px solid ${C.border}`,
-						cursor: "pointer",
-						padding: "6px 16px",
-						borderRadius: 8,
-						background: C.surface,
-						color: C.textDim,
-					}}
-				>
-					{Ic.plus(18)}
-				</button>
-
-				{/* Debug panel toggle — opens last message with debug data */}
-				<button
-					onClick={() => {
-						if (debugMsgIdx !== null) { setDebugMsgIdx(null); return; }
-						const lastIdx = [...chatMessages].map((m, idx) => ({ m, idx })).reverse().find(({ m }) => m.debug && m.debug.length > 0)?.idx ?? null;
-						setDebugMsgIdx(lastIdx);
-					}}
-					title="Debug trace"
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 6,
-						border: `1px solid ${debugMsgIdx !== null ? C.borderAccent : C.border}`,
+						gap: 5,
+						border: `1px solid ${sidebarOpen ? C.borderAccent : C.border}`,
 						cursor: "pointer",
 						padding: "6px 10px",
 						borderRadius: 8,
-						background: debugMsgIdx !== null ? C.accentDim : C.surface,
-						color: debugMsgIdx !== null ? C.accent : C.textDim,
+						background: sidebarOpen ? C.accentDim : C.surface,
+						color: sidebarOpen ? C.accent : C.textDim,
+						fontSize: 11,
+						fontWeight: 500,
 					}}
 				>
-					{Ic.bug(16)}
+					<svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+					<span>History</span>
 				</button>
 			</div>
 
@@ -1084,7 +1312,8 @@ export default function GregPage() {
 										width: 80,
 										height: 80,
 										borderRadius: 16,
-										background: C.green,
+										background: PERSONALITY_COLOR[personality],
+										transition: "background 0.15s",
 										display: "flex",
 										alignItems: "center",
 										justifyContent: "center",
@@ -1096,8 +1325,8 @@ export default function GregPage() {
 										<path d="M6.5 13.5h7" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
 									</svg>
 								</div>
-								{gregMode && greetingGif && (
-									<img src={greetingGif} alt="greg" style={{ maxHeight: 720, borderRadius: 12 }} />
+								{isGregLike && (
+									<img src="https://media0.giphy.com/media/v1.Y2lkPWM4MWI4ODBkMnl2cmJ4ODFic3pwcjNqdGx4eTd0NWZqeHR1Z21jZXk0dmc2NzByeiZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/j0HjChGV0J44KrrlGv/giphy.gif" alt="greg" style={{ maxHeight: 720, borderRadius: 12 }} />
 								)}
 								<span style={{ fontSize: 24 }}>
 									{greeting}
@@ -1166,10 +1395,10 @@ export default function GregPage() {
 
 					{/* Input */}
 					<div style={{ marginTop: 12, flexShrink: 0 }}>
-						<InputBoxWrapper>
+						<InputBoxWrapper personality={personality}>
 						<textarea
 							rows={1}
-							placeholder={gregMode ? "talk to greg..." : "Search API documentation..."}
+							placeholder={isGregLike ? "talk to greg..." : "Search API documentation..."}
 							value={input}
 							onChange={(e) => { setInput(e.target.value); const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }}
 							onKeyDown={handleKeyDown}
@@ -1230,11 +1459,9 @@ export default function GregPage() {
 					</div>
 				</div>
 
-				{/* Detail panel */}
+				{/* Detail panel — Swagger iframe */}
 				{detailItem && (
-					<div style={{ width: 340, flexShrink: 0 }}>
-						<DetailPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
-					</div>
+					<SwaggerPanel item={detailItem as never} type={detailType} onClose={() => setDetail(null)} />
 				)}
 			</div>
 			</div>

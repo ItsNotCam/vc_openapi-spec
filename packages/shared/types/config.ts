@@ -21,11 +21,12 @@ export const AppConfig = z.object({
 	MCP_READ_TOKEN: z.string().optional(),
 
 	LLM_PROVIDER: z.enum(["anthropic", "ollama"]).default("anthropic"),
-	LLM_MODEL: z.string().default("claude-sonnet-4-20250514"),
+	LLM_MODEL: z.string().default("claude-haiku-4-5-20251001"),
 	ANTHROPIC_API_KEY: z.string().optional(),
 	GIPHY_API_KEY: z.string().optional(),
 
 	MAX_TOOL_CALLS_PER_SESSION: z.coerce.number().default(5),
+	LLM_MAX_TOKENS: z.coerce.number().default(4096),
 
 	NODE_ENV: z.string().default("development"),
 });
