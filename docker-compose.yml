@@ -15,7 +15,7 @@ services:
       CHROMA_PORT: 8000
       PORT: 3000
       HOST: 0.0.0.0
-      NODE_ENV: development
+      NODE_ENV: production
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5-20251001}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -30,14 +30,28 @@ services:
     depends_on:
       - chromadb
 
-  frontend:
+  nextjs:
     build:
       context: .
-      dockerfile: packages/frontend/Dockerfile
+      dockerfile: packages/nextjs/Dockerfile
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      NODE_ENV: production
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5-20251001}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mxbai-embed-large}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      SPECS_DIR: /app/specs
     ports:
-      - "3001:3000"
+      - "3001:3001"
+    volumes:
+      - ./specs:/app/specs
     depends_on:
-      - mcp-server
+      - chromadb
 
 volumes:
   chroma_data:

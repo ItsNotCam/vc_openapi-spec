@@ -32,21 +32,34 @@ services:
     depends_on:
       - chromadb
 
-  frontend:
+  nextjs:
     image: oven/bun:1-debian
-    working_dir: /app/packages/frontend
-    command: sh -c "bun install && bunx vite --port 3000 --host 0.0.0.0"
+    working_dir: /app
+    command: sh -c "bun install && cd packages/nextjs && bun run dev"
     environment:
-      VITE_API_URL: http://mcp-server:3000
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      NODE_ENV: development
+      HOSTNAME: 0.0.0.0
+      WATCHPACK_POLLING: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5-20251001}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mxbai-embed-large}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      SPECS_DIR: /app/specs
     ports:
-      - "3001:3000"
+      - "3001:3001"
     volumes:
       - .:/app
       - /app/node_modules
-      - /app/packages/frontend/node_modules
+      - /app/packages/nextjs/node_modules
+      - /app/packages/nextjs/.next
+      - ./specs:/app/specs
     depends_on:
-      - mcp-server
+      - chromadb
 
 volumes:
   chroma_data:
-  specs_data:

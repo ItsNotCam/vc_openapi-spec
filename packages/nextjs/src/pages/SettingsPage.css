@@ -1,0 +1,21 @@
+@reference "../app/globals.css";
+
+.settings-section-label {
+  @apply text-[0.9375rem] font-semibold uppercase tracking-[0.06em] text-[var(--g-text-dim)] mb-2;
+}
+
+.settings-tab-btn {
+  @apply flex items-center gap-1 px-[0.8125rem] py-1 text-[0.9375rem] font-medium border-none cursor-pointer rounded-md bg-transparent text-[var(--g-text-dim)];
+}
+
+.settings-tab-btn.active {
+  @apply bg-[var(--g-accent-muted)] text-[var(--g-accent)];
+}
+
+.settings-mode-btn {
+  @apply px-3.5 py-1.5 text-[0.9375rem] font-medium border-none cursor-pointer rounded-md bg-transparent text-[var(--g-text-dim)];
+}
+
+.settings-mode-btn.active {
+  @apply bg-[var(--g-accent-muted)] text-[var(--g-accent)];
+}

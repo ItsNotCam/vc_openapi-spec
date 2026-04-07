@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
-import config from "./src/core/config";
-import Retriever from "./src/core/retriever";
+import config from "@greg/shared/core/config";
+import Retriever from "@greg/shared/core/retriever";
 import { runStdioServer } from "./src/server/mcpServer";
 import { runHttpServer } from "./src/server/httpServer";
 
