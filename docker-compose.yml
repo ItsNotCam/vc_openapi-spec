@@ -49,7 +49,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - specs_data:/app/specs
+      - ./specs:/app/specs
     depends_on:
       - chromadb
 

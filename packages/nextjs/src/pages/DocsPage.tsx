@@ -17,7 +17,7 @@ export default function DocsPage() {
 	const selectedApi = docsApi || (apis.length > 0 ? apis[0].name : "");
 	const apiInfo = apis.find((a) => a.name === selectedApi);
 
-	const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+	const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
 	// Pass method+path+theme as query params
 	const params = new URLSearchParams();

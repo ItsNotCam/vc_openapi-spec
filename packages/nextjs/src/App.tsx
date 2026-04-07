@@ -11,9 +11,13 @@ import SettingsPage from "./pages/SettingsPage";
 import IngestFloat from "./components/IngestFloat";
 
 export default function App() {
-	const { page, setApis, setDocsApi, docsApi, theme, setTheme } = useStore(
-		useShallow((s) => ({ page: s.page, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme }))
+	const { page, setApis, setDocsApi, docsApi, theme, setTheme, hydrateFromStorage } = useStore(
+		useShallow((s) => ({ page: s.page, setApis: s.setApis, setDocsApi: s.setDocsApi, docsApi: s.docsApi, theme: s.theme, setTheme: s.setTheme, hydrateFromStorage: s.hydrateFromStorage }))
 	);
+
+	useEffect(() => {
+		hydrateFromStorage();
+	}, []);
 
 	useEffect(() => {
 		listApis()

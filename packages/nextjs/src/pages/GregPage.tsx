@@ -902,7 +902,7 @@ export default function GregPage() {
 
 	const [greetingGif, setGreetingGif] = useState<string | null>(null);
 	const [loadingGif, setLoadingGif] = useState<string | null>(null);
-	const [greeting, setGreetingText] = useState(() => getGreeting(personality));
+	const [greeting, setGreetingText] = useState<string>("");
 	const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [debugMsgIdx, setDebugMsgIdx] = useState<number | null>(null);

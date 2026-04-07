@@ -50,13 +50,14 @@ function getStoredTheme(): ThemePref {
 }
 
 function applyTheme(pref: ThemePref) {
+	if (typeof window === "undefined") return;
 	const isDark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 	document.documentElement.classList.toggle("light", !isDark);
 	try { localStorage.setItem("greg-theme", pref); } catch {}
 }
 
-// Apply on load immediately (before React renders)
-applyTheme(getStoredTheme());
+// Apply on load immediately (before React renders, client-only)
+if (typeof window !== "undefined") applyTheme(getStoredTheme());
 
 interface AppState {
 	// Theme
@@ -130,10 +131,13 @@ interface AppState {
 	detailItem: SearchResult | EndpointCard | null;
 	detailType: "endpoints" | "schemas";
 	setDetail: (item: SearchResult | EndpointCard | null, type?: "endpoints" | "schemas") => void;
+
+	// Client-side hydration from localStorage (call once in useEffect)
+	hydrateFromStorage: () => void;
 }
 
 export const useStore = create<AppState>()((set) => ({
-	theme: getStoredTheme(),
+	theme: "system" as ThemePref,
 	setTheme: (t) => { applyTheme(t); set({ theme: t }); },
 
 	page: "greg",
@@ -148,10 +152,10 @@ export const useStore = create<AppState>()((set) => ({
 	viewDocs: (api, method, path, operationId, tag) => set({ page: "docs", docsApi: api, docsAnchor: { method, path, operationId, tag } }),
 
 	chatMessages: [],
-	personality: (() => { try { const v = localStorage.getItem("greg-personality"); return (v === "greg" || v === "verbose" || v === "curt") ? v : localStorage.getItem("greg-mode") === "false" ? "curt" : "greg"; } catch { return "greg" as const; } })(),
+	personality: "greg" as "greg" | "verbose" | "curt",
 	chatLoading: false,
-	selectedModel: (() => { try { return localStorage.getItem("greg-model") ?? ""; } catch { return ""; } })(),
-	selectedProvider: (() => { try { return localStorage.getItem("greg-provider") ?? ""; } catch { return ""; } })(),
+	selectedModel: "",
+	selectedProvider: "",
 	setChatMessages: (msgs) => set({ chatMessages: msgs }),
 	addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
 	updateLastAssistant: (updater) =>
@@ -173,7 +177,7 @@ export const useStore = create<AppState>()((set) => ({
 	},
 	clearChat: () => set((s) => { s.saveChat(); return { chatMessages: [], chatLoading: false, activeChatId: null }; }),
 
-	chatHistory: (() => { try { return JSON.parse(localStorage.getItem("greg-history") ?? "[]"); } catch { return []; } })(),
+	chatHistory: [] as Array<{ id: string; title: string; messages: ChatMsg[]; ts: number }>,
 	activeChatId: null,
 	saveChat: () => set((s) => {
 		if (s.chatMessages.length === 0) return {};
@@ -209,7 +213,7 @@ export const useStore = create<AppState>()((set) => ({
 	}),
 	newChat: () => set((s) => { s.saveChat(); return { chatMessages: [], activeChatId: null }; }),
 
-	doubleCheck: (() => { try { return localStorage.getItem("greg-double-check") === "true"; } catch { return false; } })(),
+	doubleCheck: false,
 	setDoubleCheck: (v) => { try { localStorage.setItem("greg-double-check", String(v)); } catch {} set({ doubleCheck: v }); },
 
 	customGregPrompt: "",
@@ -239,4 +243,19 @@ export const useStore = create<AppState>()((set) => ({
 	detailItem: null,
 	detailType: "endpoints",
 	setDetail: (item, type) => set({ detailItem: item, detailType: type ?? "endpoints" }),
+
+	hydrateFromStorage: () => {
+		try {
+			const theme = (localStorage.getItem("greg-theme") as ThemePref) ?? "system";
+			const pv = localStorage.getItem("greg-personality");
+			const personality = (pv === "greg" || pv === "verbose" || pv === "curt") ? pv
+				: localStorage.getItem("greg-mode") === "false" ? "curt" : "greg";
+			const selectedModel = localStorage.getItem("greg-model") ?? "";
+			const selectedProvider = localStorage.getItem("greg-provider") ?? "";
+			const chatHistory = JSON.parse(localStorage.getItem("greg-history") ?? "[]");
+			const doubleCheck = localStorage.getItem("greg-double-check") === "true";
+			applyTheme(theme);
+			set({ theme, personality: personality as "greg" | "verbose" | "curt", selectedModel, selectedProvider, chatHistory, doubleCheck });
+		} catch {}
+	},
 }));
