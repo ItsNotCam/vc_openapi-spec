@@ -1,0 +1,21 @@
+@reference "../app/globals.css";
+
+/* Debug panel entry row */
+.debug-entry {
+  @apply font-mono text-[0.6875rem] leading-[1.65];
+}
+
+/* Debug group label */
+.debug-group-label {
+  @apply text-[0.625rem] text-[var(--g-text-dim)] py-2 pb-[0.1875rem] font-mono uppercase tracking-[0.06em];
+}
+
+/* Collapsible toggle button (CodeDropdown, EndpointDropdown, SectionDropdown, etc.) */
+.collapse-btn {
+  @apply flex items-center gap-1.5 border-none cursor-pointer bg-transparent;
+}
+
+/* Chat input send/stop button */
+.chat-action-btn {
+  @apply w-7 h-7 flex items-center justify-center border-none rounded-[0.4375rem] cursor-pointer shrink-0;
+}

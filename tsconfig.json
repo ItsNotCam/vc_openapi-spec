@@ -1,6 +1,8 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/frontend" }
+    { "path": "packages/shared" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/nextjs" }
   ]
 }

@@ -3,7 +3,54 @@
 	"version": "0.1.0",
 	"type": "module",
 	"main": "types/index.ts",
+	"exports": {
+		".": {
+			"import": "./types/index.ts",
+			"types": "./types/index.ts"
+		},
+		"./core/config": {
+			"import": "./src/core/config.ts",
+			"types": "./src/core/config.ts"
+		},
+		"./core/errors": {
+			"import": "./src/core/errors.ts",
+			"types": "./src/core/errors.ts"
+		},
+		"./core/store": {
+			"import": "./src/core/store.ts",
+			"types": "./src/core/store.ts"
+		},
+		"./core/retriever": {
+			"import": "./src/core/retriever.ts",
+			"types": "./src/core/retriever.ts"
+		},
+		"./core/chunker": {
+			"import": "./src/core/chunker.ts",
+			"types": "./src/core/chunker.ts"
+		},
+		"./core/parser": {
+			"import": "./src/core/parser.ts",
+			"types": "./src/core/parser.ts"
+		},
+		"./chat": {
+			"import": "./src/chat.ts",
+			"types": "./src/chat.ts"
+		}
+	},
+	"imports": {
+		"#types/config": "./types/config.ts",
+		"#types/store": "./types/store.ts",
+		"#types/openapi": "./types/openapi.ts"
+	},
+	"devDependencies": {
+		"@types/node": "^22"
+	},
 	"dependencies": {
-		"zod": "^3.24.4"
+		"zod": "^3.24.4",
+		"@anthropic-ai/sdk": "^0.39.0",
+		"@apidevtools/json-schema-ref-parser": "^11.9.3",
+		"chromadb": "^1.9.2",
+		"chromadb-default-embed": "^2.13.2",
+		"yaml": "^2.7.1"
 	}
 }
